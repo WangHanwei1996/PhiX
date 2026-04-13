@@ -1,4 +1,7 @@
 #include "equation/Equation.h"
+#include "field/ScalarField.h"
+#include "field/VectorField.h"
+#include "equation/Term.h"
 
 #include <cuda_runtime.h>
 #include <stdexcept>
@@ -122,7 +125,7 @@ __global__ void kernel_grad_accumulate(
 // Built-in operator factories (return Term with launchers set up)
 // ===========================================================================
 
-Term lap(const Field& f, double coeff) {
+Term lap(const ScalarField& f, double coeff) {
     Term t;
     t.type  = TermType::LAPLACIAN;
     t.field = &f;
@@ -170,7 +173,7 @@ Term lap(const Field& f, double coeff) {
     return t;
 }
 
-Term grad(const Field& f, int axis, double coeff) {
+Term grad(const ScalarField& f, int axis, double coeff) {
     if (axis < 0 || axis >= f.mesh.dim)
         throw std::invalid_argument("grad: axis out of range for this mesh dimension");
 
@@ -225,7 +228,7 @@ Term grad(const Field& f, int axis, double coeff) {
 // Equation
 // ===========================================================================
 
-Equation::Equation(Field& unknown_, const std::string& name_)
+Equation::Equation(ScalarField& unknown_, const std::string& name_)
     : name(name_), unknown(unknown_) {}
 
 void Equation::setRHS(const RHSExpr& expr) {
@@ -236,7 +239,7 @@ void Equation::setRHS(const Term& t) {
     rhs_expr_ = RHSExpr(t);
 }
 
-void Equation::computeRHS(Field& rhs) const {
+void Equation::computeRHS(ScalarField& rhs) const {
     if (!rhs.deviceAllocated())
         throw std::runtime_error("Equation::computeRHS: rhs device memory not allocated");
     if (rhs_expr_.terms.empty())
@@ -261,7 +264,7 @@ void Equation::computeRHS(Field& rhs) const {
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-void Equation::computeRHSCPU(Field& rhs) const {
+void Equation::computeRHSCPU(ScalarField& rhs) const {
     if (rhs_expr_.terms.empty())
         throw std::runtime_error("Equation::computeRHSCPU: RHS not set");
 
@@ -273,6 +276,56 @@ void Equation::computeRHSCPU(Field& rhs) const {
                 "Equation::computeRHSCPU: a Term has no CPU kernel.");
         term.cpu_kernel(rhs.curr.data(), term.field->curr.data(), term.coeff);
     }
+}
+
+// ===========================================================================
+// Vector operator factories
+// ===========================================================================
+
+// lap(VectorField) — component-wise Laplacian
+VectorRHSExpr lap(const VectorField& vf, double coeff) {
+    VectorRHSExpr expr(vf.nComponents());
+    for (int c = 0; c < vf.nComponents(); ++c)
+        expr[c] = RHSExpr(lap(vf[c], coeff));
+    return expr;
+}
+
+// grad(ScalarField) — returns mesh.dim-component gradient
+VectorRHSExpr grad(const ScalarField& f, double coeff) {
+    const int dim = f.mesh.dim;
+    VectorRHSExpr expr(dim);
+    for (int ax = 0; ax < dim; ++ax)
+        expr[ax] = RHSExpr(grad(f, ax, coeff));
+    return expr;
+}
+
+// div(VectorField) — scalar divergence
+RHSExpr div(const VectorField& vf, double coeff) {
+    if (vf.nComponents() < vf.mesh.dim)
+        throw std::invalid_argument(
+            "div: VectorField must have at least mesh.dim components");
+    RHSExpr expr;
+    for (int ax = 0; ax < vf.mesh.dim; ++ax)
+        expr += grad(vf[ax], ax, coeff);
+    return expr;
+}
+
+// curl(VectorField) — 3D only
+VectorRHSExpr curl(const VectorField& vf, double coeff) {
+    if (vf.mesh.dim != 3 || vf.nComponents() != 3)
+        throw std::invalid_argument(
+            "curl: VectorField must be 3-component on a 3D mesh");
+    VectorRHSExpr expr(3);
+    // curl[0] =  dv2/dy - dv1/dz
+    expr[0] += grad(vf[2], 1,  coeff);
+    expr[0] += grad(vf[1], 2, -coeff);
+    // curl[1] =  dv0/dz - dv2/dx
+    expr[1] += grad(vf[0], 2,  coeff);
+    expr[1] += grad(vf[2], 0, -coeff);
+    // curl[2] =  dv1/dx - dv0/dy
+    expr[2] += grad(vf[1], 0,  coeff);
+    expr[2] += grad(vf[0], 1, -coeff);
+    return expr;
 }
 
 } // namespace PhiX

@@ -5,17 +5,19 @@
 //
 // Requires nvcc compilation (CUDA device code is referenced by templates).
 //
-// Typical usage:
+// Scalar DSL usage:
+//   eq.setRHS(M * lap(phi) + M * pw(phi, [] __host__ __device__ (double p) {
+//       return p - p*p*p; }));
 //
-//   double M     = eq.params["M"];
-//   double kappa = eq.params["kappa"];
-//
-//   eq.setRHS(M * lap(phi) + M * pw(phi, [] __device__ (double p) {
-//                 return p * (1.0 - p * p);   // Allen-Cahn bulk force
-//             }));
+// Vector DSL usage:
+//   veq.setRHS(nu * lap(v));            // lap(VectorField) -> VectorRHSExpr
+//   veq.setRHS(grad(p));                // grad(ScalarField) -> VectorRHSExpr
+//   RHSExpr divV = div(v);              // div(VectorField) -> RHSExpr
+//   VectorRHSExpr curlV = curl(v);      // curl(VectorField) -> VectorRHSExpr (3D)
 // ---------------------------------------------------------------------------
 
-#include "field/Field.h"
+#include "field/ScalarField.h"
+#include "field/VectorField.h"
 
 #include <functional>
 #include <vector>
@@ -39,7 +41,7 @@ enum class TermType { LAPLACIAN, GRADIENT, POINTWISE };
 struct Term {
     TermType      type  = TermType::LAPLACIAN;
     double        coeff = 1.0;
-    const Field*  field = nullptr;   // source field (non-owning)
+    const ScalarField*  field = nullptr;   // source field (non-owning)
     int           axis  = 0;         // for GRADIENT: 0=x, 1=y, 2=z
 
     TermLauncher  gpu_launcher;   // host fn that launches GPU kernel
@@ -97,10 +99,10 @@ inline RHSExpr operator*(double s, const RHSExpr& e) { return e * s; }
 // ---------------------------------------------------------------------------
 
 // coeff * nabla^2(f)   — 2nd-order central FD Laplacian summed over active axes
-Term lap(const Field& f, double coeff = 1.0);
+Term lap(const ScalarField& f, double coeff = 1.0);
 
 // coeff * d(f)/d(x_axis)  — 2nd-order central FD component gradient
-Term grad(const Field& f, int axis, double coeff = 1.0);
+Term grad(const ScalarField& f, int axis, double coeff = 1.0);
 
 // ---------------------------------------------------------------------------
 // pw<Functor> — pointwise user-defined transform
@@ -119,7 +121,79 @@ Term grad(const Field& f, int axis, double coeff = 1.0);
 //   pw(phi, [] __device__ (double p) { return p*(1.0-p*p); })
 // ---------------------------------------------------------------------------
 template<typename Functor>
-Term pw(const Field& f, Functor func, double coeff = 1.0);
+Term pw(const ScalarField& f, Functor func, double coeff = 1.0);
+
+// ===========================================================================
+// VectorRHSExpr — per-component RHS expression for vector equations
+//
+// VectorRHSExpr wraps N RHSExpr objects, one per vector component.
+// Supports the same coefficient arithmetic as RHSExpr:
+//   double * VectorRHSExpr, VectorRHSExpr +/- VectorRHSExpr, etc.
+//
+// Typical use:
+//   VectorEquation veq(v, "diffusion");
+//   veq.setRHS(nu * lap(v));     // lap returns VectorRHSExpr
+// ===========================================================================
+
+struct VectorRHSExpr {
+    std::vector<RHSExpr> components;
+
+    VectorRHSExpr() = default;
+    explicit VectorRHSExpr(int n) : components(n) {}
+
+    int nComponents() const { return static_cast<int>(components.size()); }
+
+    RHSExpr&       operator[](int c)       { return components[c]; }
+    const RHSExpr& operator[](int c) const { return components[c]; }
+
+    VectorRHSExpr& operator+=(const VectorRHSExpr& o) {
+        for (int c = 0; c < nComponents(); ++c) components[c] += o.components[c];
+        return *this;
+    }
+    VectorRHSExpr& operator-=(const VectorRHSExpr& o) {
+        for (int c = 0; c < nComponents(); ++c) components[c] -= o.components[c];
+        return *this;
+    }
+    VectorRHSExpr operator+(const VectorRHSExpr& o) const {
+        VectorRHSExpr r = *this; r += o; return r;
+    }
+    VectorRHSExpr operator-(const VectorRHSExpr& o) const {
+        VectorRHSExpr r = *this; r -= o; return r;
+    }
+    VectorRHSExpr operator*(double s) const {
+        VectorRHSExpr r(nComponents());
+        for (int c = 0; c < nComponents(); ++c) r[c] = components[c] * s;
+        return r;
+    }
+    VectorRHSExpr operator-() const { return (*this) * (-1.0); }
+};
+
+inline VectorRHSExpr operator*(double s, const VectorRHSExpr& e) { return e * s; }
+
+// ===========================================================================
+// Vector operator factories
+// ===========================================================================
+
+// lap(VectorField)  — returns VectorRHSExpr;  component c is lap(vf[c])
+VectorRHSExpr lap(const VectorField& vf, double coeff = 1.0);
+
+// grad(ScalarField)  — returns VectorRHSExpr of dimension mesh.dim;
+//   component c is grad(f, c)
+VectorRHSExpr grad(const ScalarField& f, double coeff = 1.0);
+
+// div(VectorField)  — returns RHSExpr (scalar);
+//   result = sum_c grad(vf[c], c)
+RHSExpr div(const VectorField& vf, double coeff = 1.0);
+
+// curl(VectorField)  — returns VectorRHSExpr (3D only, dim must be 3);
+//   curl[0] = dv2/dy - dv1/dz
+//   curl[1] = dv0/dz - dv2/dx
+//   curl[2] = dv1/dx - dv0/dy
+VectorRHSExpr curl(const VectorField& vf, double coeff = 1.0);
+
+// pw(VectorField, Functor)  — pointwise per-component;  component c is pw(vf[c], func)
+template<typename Functor>
+VectorRHSExpr pw(const VectorField& vf, Functor func, double coeff = 1.0);
 
 } // namespace PhiX
 

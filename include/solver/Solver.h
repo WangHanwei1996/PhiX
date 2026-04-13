@@ -2,7 +2,7 @@
 
 #include "equation/Equation.h"
 #include "boundary/BoundaryCondition.h"
-#include "field/Field.h"
+#include "field/ScalarField.h"
 
 #include <functional>
 #include <string>
@@ -82,8 +82,8 @@ public:
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------
-    const Field& unknown() const { return equation_.unknown; }
-    Field&       unknown()       { return equation_.unknown; }
+    const ScalarField& unknown() const { return equation_.unknown; }
+    ScalarField&       unknown()       { return equation_.unknown; }
 
     const Equation&                       equation() const { return equation_; }
     const std::vector<BoundaryCondition*>& bcs()     const { return bcs_; }
@@ -93,11 +93,11 @@ private:
     std::vector<BoundaryCondition*> bcs_;
 
     // Scratch fields — allocated in constructor, same mesh & ghost as unknown
-    Field rhs_;   // used by Euler and each RK4 stage accumulator
+    ScalarField rhs_;   // used by Euler and each RK4 stage accumulator
     // RK4 stage vectors k1..k4 (only allocated when scheme == RK4)
-    Field k1_, k2_, k3_, k4_;
+    ScalarField k1_, k2_, k3_, k4_;
     // RK4 also needs a temporary copy of phi to evaluate mid-stages
-    Field phi_tmp_;
+    ScalarField phi_tmp_;
 
     bool use_rk4_ = false;
 

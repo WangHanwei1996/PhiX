@@ -23,8 +23,8 @@ class NoFluxBC : public BoundaryCondition {
 public:
     NoFluxBC(Axis axis, Side side = Side::BOTH);
 
-    void applyOnCPU(Field& f) const override;
-    void applyOnGPU(Field& f) const override;
+    void applyOnCPU(ScalarField& f) const override;
+    void applyOnGPU(ScalarField& f) const override;
 };
 
 } // namespace PhiX

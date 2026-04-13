@@ -14,14 +14,19 @@ compile_commands.json
 
 # Compiled binaries (tutorial / develop executables)
 tutorials/quickstart/quickstart
-develop/Spinodal Decomposition/spinodal_decomposition
-etc/temp/simulate
+develop/Spinodal\ Decomposition/spinodal_decomposition
 
 # Output data
 output/
+
+# Data / simulation output files
+*.dat
 *.field
 *.png
-*.dat
+
+# Compiled binaries without extension (e.g. etc/temp/simulate)
+etc/temp/simulate
+develop/Spinodal\ Decomposition/spinodal_decomposition
 
 # Python cache
 __pycache__/

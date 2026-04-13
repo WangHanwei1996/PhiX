@@ -49,7 +49,7 @@ struct FaceParams {
     int face_stride1;  // flat-index stride for thread dim 1
 };
 
-static FaceParams makeFaceParams(const Field& f, Axis ax) {
+static FaceParams makeFaceParams(const ScalarField& f, Axis ax) {
     int sx = f.storedDims[0];
     int sy = f.storedDims[1];
     int sz = f.storedDims[2];
@@ -201,7 +201,7 @@ __global__ void kernel_fixed(
 PeriodicBC::PeriodicBC(Axis axis)
     : BoundaryCondition(axis, Side::BOTH) {}
 
-void PeriodicBC::applyOnCPU(Field& f) const {
+void PeriodicBC::applyOnCPU(ScalarField& f) const {
     int g   = f.ghost;
     double* data = f.curr.data();
 
@@ -221,7 +221,7 @@ void PeriodicBC::applyOnCPU(Field& f) const {
     }
 }
 
-void PeriodicBC::applyOnGPU(Field& f) const {
+void PeriodicBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("PeriodicBC::applyOnGPU: device not allocated");
 
@@ -245,7 +245,7 @@ void PeriodicBC::applyOnGPU(Field& f) const {
 NoFluxBC::NoFluxBC(Axis axis, Side side)
     : BoundaryCondition(axis, side) {}
 
-void NoFluxBC::applyOnCPU(Field& f) const {
+void NoFluxBC::applyOnCPU(ScalarField& f) const {
     bool do_low  = (side == Side::LOW  || side == Side::BOTH);
     bool do_high = (side == Side::HIGH || side == Side::BOTH);
 
@@ -274,7 +274,7 @@ void NoFluxBC::applyOnCPU(Field& f) const {
     }
 }
 
-void NoFluxBC::applyOnGPU(Field& f) const {
+void NoFluxBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("NoFluxBC::applyOnGPU: device not allocated");
 
@@ -302,7 +302,7 @@ void NoFluxBC::applyOnGPU(Field& f) const {
 FixedBC::FixedBC(Axis axis, Side side, double value)
     : BoundaryCondition(axis, side), value(value) {}
 
-void FixedBC::applyOnCPU(Field& f) const {
+void FixedBC::applyOnCPU(ScalarField& f) const {
     bool do_low  = (side == Side::LOW  || side == Side::BOTH);
     bool do_high = (side == Side::HIGH || side == Side::BOTH);
 
@@ -329,7 +329,7 @@ void FixedBC::applyOnCPU(Field& f) const {
     }
 }
 
-void FixedBC::applyOnGPU(Field& f) const {
+void FixedBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("FixedBC::applyOnGPU: device not allocated");
 

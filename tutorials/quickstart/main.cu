@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 #include "mesh/Mesh.h"
-#include "field/Field.h"
+#include "field/ScalarField.h"
 #include "boundary/PeriodicBC.h"
 #include "equation/Equation.h"
 #include "solver/Solver.h"
@@ -37,7 +37,7 @@ int main() {
     // -----------------------------------------------------------------------
     // 2. Field  —  small random initial condition
     // -----------------------------------------------------------------------
-    Field phi(mesh, "phi", /*ghost=*/1);
+    ScalarField phi(mesh, "phi", /*ghost=*/1);
 
     std::srand(42);
     for (int j = 0; j < mesh.n[1]; ++j)

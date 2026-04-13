@@ -42,10 +42,13 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # ---------------------------------------------------------------------------
 add_library(phix STATIC
     src/mesh/Mesh.cpp
-    src/field/Field.cu
+    src/field/ScalarField.cu
+    src/field/VectorField.cu
     src/boundary/Boundary.cu
     src/equation/Equation.cu
+    src/equation/VectorEquation.cu
     src/solver/Solver.cu
+    src/solver/VectorSolver.cu
 )
 
 target_include_directories(phix PUBLIC

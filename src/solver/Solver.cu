@@ -72,8 +72,8 @@ __global__ void kernel_rk4_update(double*       phi,
 // ===========================================================================
 // Helper: allocate a scratch Field matching unknown's layout
 // ===========================================================================
-static Field makeScratch(const Field& ref, const std::string& tag) {
-    Field f(ref.mesh, tag, ref.ghost);
+static ScalarField makeScratch(const ScalarField& ref, const std::string& tag) {
+    ScalarField f(ref.mesh, tag, ref.ghost);
     f.allocDevice();
     return f;
 }
@@ -152,7 +152,7 @@ void Solver::eulerUpdateCPU() {
 // ===========================================================================
 
 // Helper: copy phi into phi_tmp then apply BCs on phi_tmp
-static void prepTmpGPU(Field& phi_tmp, const Field& phi,
+static void prepTmpGPU(ScalarField& phi_tmp, const ScalarField& phi,
                         std::vector<BoundaryCondition*>& bcs,
                         const double* k, double coeff)
 {
@@ -173,9 +173,7 @@ void Solver::rk4AdvanceGPU() {
     double dt2 = dt * 0.5;
     double dt6 = dt / 6.0;
 
-    Field& phi = equation_.unknown;
-
-    // k1 = f(phi)
+    ScalarField& phi = equation_.unknown;
     applyBCsGPU();
     equation_.computeRHS(k1_);   // k1_.d_curr = rhs evaluated at phi
 
@@ -184,7 +182,7 @@ void Solver::rk4AdvanceGPU() {
     prepTmpGPU(phi_tmp_, phi, bcs_, k1_.d_curr, dt2);
     // Save real unknown, point equation to phi_tmp_, compute, restore
     {
-        Field& saved  = equation_.unknown;   // ref to real phi (same object)
+        ScalarField& saved  = equation_.unknown;   // ref to real phi (same object)
         // We can't rebind the reference, so we directly call the internal
         // compute method with phi_tmp_.d_curr as the source for RHS.
         // Because Equation::computeRHS uses term.field->d_curr, we need

@@ -40,7 +40,7 @@ __global__ void kernel_pw_accumulate(
 // pw<Functor> definition
 // ---------------------------------------------------------------------------
 template<typename Functor>
-Term pw(const Field& f, Functor func, double coeff) {
+Term pw(const ScalarField& f, Functor func, double coeff) {
     Term t;
     t.type  = TermType::POINTWISE;
     t.field = &f;
@@ -77,6 +77,19 @@ Term pw(const Field& f, Functor func, double coeff) {
     };
 
     return t;
+}
+
+// ---------------------------------------------------------------------------
+// pw(VectorField, Functor) — pointwise per-component
+//   Returns VectorRHSExpr; component c is pw(vf[c], func, coeff)
+//   NOTE: Term.h must be included before this file (VectorRHSExpr must exist).
+// ---------------------------------------------------------------------------
+template<typename Functor>
+VectorRHSExpr pw(const VectorField& vf, Functor func, double coeff) {
+    VectorRHSExpr expr(vf.nComponents());
+    for (int c = 0; c < vf.nComponents(); ++c)
+        expr[c] = RHSExpr(pw(vf[c], func, coeff));
+    return expr;
 }
 
 } // namespace PhiX

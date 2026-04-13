@@ -1,12 +1,7 @@
 #pragma once
-
-#include "mesh/Mesh.h"
-
-#include <string>
-#include <vector>
-#include <cstddef>
-
-namespace PhiX {
+// Backward-compatibility forwarding header.
+// New code should include "field/ScalarField.h" directly.
+#include "field/ScalarField.h"
 
 // ---------------------------------------------------------------------------
 // Output format selector used by Field::write()

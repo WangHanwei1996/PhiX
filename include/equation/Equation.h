@@ -1,7 +1,7 @@
 #pragma once
 
 #include "equation/Term.h"
-#include "field/Field.h"
+#include "field/ScalarField.h"
 
 #include <map>
 #include <string>
@@ -28,11 +28,11 @@ namespace PhiX {
 class Equation {
 public:
     std::string              name;
-    Field&                   unknown;     // the d/dt field (non-owning ref)
-    std::vector<Field*>      auxFields;   // other fields used on RHS (non-owning)
+    ScalarField&                   unknown;     // the d/dt field (non-owning ref)
+    std::vector<ScalarField*>      auxFields;   // other fields used on RHS (non-owning)
     std::map<std::string, double> params; // named physical constants
 
-    explicit Equation(Field& unknown, const std::string& name = "");
+    explicit Equation(ScalarField& unknown, const std::string& name = "");
 
     // -----------------------------------------------------------------------
     // Set the RHS expression.  Can be called again to update mid-simulation.
@@ -44,10 +44,10 @@ public:
     // Evaluate RHS into rhs.d_curr on GPU.
     // rhs must already have device memory allocated (rhs.allocDevice()).
     // -----------------------------------------------------------------------
-    void computeRHS(Field& rhs) const;
+    void computeRHS(ScalarField& rhs) const;
 
     // CPU fallback (useful for testing without a GPU)
-    void computeRHSCPU(Field& rhs) const;
+    void computeRHSCPU(ScalarField& rhs) const;
 
     // -----------------------------------------------------------------------
     // Convenience: return true if RHS has been set
