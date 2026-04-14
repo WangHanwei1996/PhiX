@@ -69,3 +69,5 @@ add_subdirectory(tutorials/quickstart)
 # Develop
 # ---------------------------------------------------------------------------
 add_subdirectory("develop/Spinodal Decomposition")
+add_subdirectory("develop/Ostwald_Ripening")
+add_subdirectory("develop/fieldOperation")

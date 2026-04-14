@@ -123,6 +123,26 @@ Term grad(const ScalarField& f, int axis, double coeff = 1.0);
 template<typename Functor>
 Term pw(const ScalarField& f, Functor func, double coeff = 1.0);
 
+// ---------------------------------------------------------------------------
+// pw<Functor> — 2-field pointwise transform
+//   rhs[idx] += coeff * func(f1[idx], f2[idx])
+//   Functor: __host__ __device__ double operator()(double, double) const
+//   Both fields must share the same mesh and ghost width.
+// ---------------------------------------------------------------------------
+template<typename Functor>
+Term pw(const ScalarField& f1, const ScalarField& f2,
+        Functor func, double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// pw<Functor> — 3-field pointwise transform
+//   rhs[idx] += coeff * func(f1[idx], f2[idx], f3[idx])
+//   Functor: __host__ __device__ double operator()(double, double, double) const
+//   All fields must share the same mesh and ghost width.
+// ---------------------------------------------------------------------------
+template<typename Functor>
+Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
+        Functor func, double coeff = 1.0);
+
 // ===========================================================================
 // VectorRHSExpr — per-component RHS expression for vector equations
 //
@@ -194,6 +214,18 @@ VectorRHSExpr curl(const VectorField& vf, double coeff = 1.0);
 // pw(VectorField, Functor)  — pointwise per-component;  component c is pw(vf[c], func)
 template<typename Functor>
 VectorRHSExpr pw(const VectorField& vf, Functor func, double coeff = 1.0);
+
+// pw(VectorField, ScalarField, Functor) — per-component binary op with scalar field
+//   component c: rhs_c[idx] += coeff * func(vf[c][idx], sf[idx])
+template<typename Functor>
+VectorRHSExpr pw(const VectorField& vf, const ScalarField& sf,
+                 Functor func, double coeff = 1.0);
+
+// pw(VectorField, VectorField, Functor) — component-wise binary op
+//   component c: rhs_c[idx] += coeff * func(vf1[c][idx], vf2[c][idx])
+template<typename Functor>
+VectorRHSExpr pw(const VectorField& vf1, const VectorField& vf2,
+                 Functor func, double coeff = 1.0);
 
 } // namespace PhiX
 
