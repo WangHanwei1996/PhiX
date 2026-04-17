@@ -19,6 +19,9 @@ class PeriodicBC : public BoundaryCondition {
 public:
     explicit PeriodicBC(Axis axis);
 
+    using BoundaryCondition::applyOnCPU;
+    using BoundaryCondition::applyOnGPU;
+
     void applyOnCPU(ScalarField& f) const override;
     void applyOnGPU(ScalarField& f) const override;
 };

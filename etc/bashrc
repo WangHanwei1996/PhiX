@@ -1,0 +1,47 @@
+# ===========================================================================
+# PhiX environment setup
+#
+# Usage (add to ~/.bashrc or source manually):
+#   source /path/to/PhiX/etc/bashrc
+#
+# Sets:
+#   PHIX_DIR   — project root (auto-detected from this file's location)
+#   PATH       — all directories under $PHIX_DIR/applications/ that
+#                contain at least one executable are prepended
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Locate project root (one level above this file)
+# ---------------------------------------------------------------------------
+export PHIX_DIR
+PHIX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Collect unique parent directories of executables under applications/
+# and prepend them to PATH (skip duplicates already in PATH)
+# ---------------------------------------------------------------------------
+_phix_setup_path() {
+    local apps_dir="$PHIX_DIR/applications"
+    local added=""
+
+    while IFS= read -r exe; do
+        local dir
+        dir="$(dirname "$exe")"
+
+        # skip if already queued this iteration or already in PATH
+        case ":${added}:${PATH}:" in
+            *":${dir}:"*) continue ;;
+        esac
+
+        added="${added:+${added}:}${dir}"
+    done < <(find "$apps_dir" -type f -executable 2>/dev/null | sort)
+
+    if [ -n "$added" ]; then
+        export PATH="${added}:${PATH}"
+    fi
+}
+
+_phix_setup_path
+unset -f _phix_setup_path
+
+echo "PhiX sourced: PHIX_DIR=$PHIX_DIR"

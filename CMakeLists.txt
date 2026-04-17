@@ -66,6 +66,11 @@ set_target_properties(phix PROPERTIES
 add_subdirectory(tutorials/quickstart)
 
 # ---------------------------------------------------------------------------
+# Applications
+# ---------------------------------------------------------------------------
+add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
+
+# ---------------------------------------------------------------------------
 # Develop
 # ---------------------------------------------------------------------------
 add_subdirectory("develop/Spinodal Decomposition")

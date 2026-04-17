@@ -23,6 +23,9 @@ class NoFluxBC : public BoundaryCondition {
 public:
     NoFluxBC(Axis axis, Side side = Side::BOTH);
 
+    using BoundaryCondition::applyOnCPU;
+    using BoundaryCondition::applyOnGPU;
+
     void applyOnCPU(ScalarField& f) const override;
     void applyOnGPU(ScalarField& f) const override;
 };
