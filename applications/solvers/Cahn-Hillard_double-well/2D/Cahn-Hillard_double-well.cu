@@ -22,11 +22,9 @@
 #include "boundary/PeriodicBC.h"
 #include "equation/Equation.h"
 #include "solver/Solver.h"
-
-#include <nlohmann/json.hpp>
+#include "IO/ConfigFile.h"
 #include <cstdlib>
 #include <cmath>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <set>
@@ -40,23 +38,8 @@ int main(int argc, char* argv[]) {
     // -----------------------------------------------------------------------
     // 1. Mesh  — parameters loaded from a JSONC settings file
     //    Usage: ./CH_2D [path/to/settings.jsonc]
-    //    Default: settings/settings.jsonc (relative to cwd)
     // -----------------------------------------------------------------------
-    const std::string settings_path = (argc >= 2) ? argv[1] : "settings/settings.jsonc";
-    std::ifstream settings_file(settings_path);
-    if (!settings_file.is_open()) {
-        std::cerr << "Error: cannot open settings file: " << settings_path << "\n"
-                  << "  Usage: " << argv[0] << " [path/to/settings.jsonc]\n";
-        return 1;
-    }
-    // Strip // line comments (nlohmann < 3.9 has no built-in comment support)
-    std::string json_src, line;
-    while (std::getline(settings_file, line)) {
-        auto pos = line.find("//");
-        if (pos != std::string::npos) line.erase(pos);
-        json_src += line + '\n';
-    }
-    nlohmann::json cfg = nlohmann::json::parse(json_src);
+    IO::ConfigFile cfg = IO::ConfigFile::fromArgs(argc, argv);
 
     const int    nx = cfg["mesh"]["nx"];
     const double dx = cfg["mesh"]["dx"];

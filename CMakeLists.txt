@@ -49,6 +49,7 @@ add_library(phix STATIC
     src/equation/VectorEquation.cu
     src/solver/Solver.cu
     src/solver/VectorSolver.cu
+    src/IO/ConfigFile.cpp
 )
 
 target_include_directories(phix PUBLIC
