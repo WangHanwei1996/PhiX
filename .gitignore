@@ -16,6 +16,9 @@ compile_commands.json
 tutorials/quickstart/quickstart
 develop/Spinodal\ Decomposition/spinodal_decomposition
 
+# Applications executables — explicitly listed
+applications/solvers/Cahn-Hillard_double-well/2D/CH_2D
+
 # Output data
 output/
 
