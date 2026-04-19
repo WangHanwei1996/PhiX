@@ -195,9 +195,163 @@ solver.run(nSteps, outEvery, [&](const Solver& s) {
 
 ---
 
+## Field Arithmetic & DSL
+
+PhiX provides a concise expression DSL for composing the right-hand side of time-evolution equations.  All overloads return either a `Term` or an `RHSExpr` that can be passed to `Equation::setRHS()` / `VectorEquation::setRHS()`.
+
+> **Header to include:** `equation/Term.h` (automatically pulls in `TermPW.inl` and `FieldOps.inl`).
+
+---
+
+### Scalar Field Arithmetic Operators
+
+These allow natural algebraic expressions between `ScalarField` objects and plain `double` scalars.  Every result is a `Term` that contributes `+value` to the RHS at each physical cell.
+
+| Expression | Meaning (per cell) | Return type |
+|---|---|---|
+| `f1 * f2` | $f_1 \cdot f_2$ | `Term` |
+| `f1 + f2` | $f_1 + f_2$ | `Term` |
+| `f1 - f2` | $f_1 - f_2$ | `Term` |
+| `s * f` | $s \cdot f$ | `Term` |
+| `f * s` | $f \cdot s$ | `Term` |
+| `f + s` | $f + s$ | `Term` |
+| `s + f` | $s + f$ | `Term` |
+| `f - s` | $f - s$ | `Term` |
+| `s - f` | $s - f$ | `Term` |
+| `-f` | $-f$ | `Term` |
+
+Example:
+
+```cpp
+// Allen–Cahn: ∂φ/∂t = M·∇²φ + M·φ·(1 − φ²)
+// The polynomial part is built purely from field/scalar arithmetic:
+eq.setRHS(M * lap(phi) + M * (phi - phi * phi * phi));
+```
+
+---
+
+### Differential Operator Factories
+
+All factories return a `Term` (scalar result) or a `VectorRHSExpr` (vector result) and accept an optional coefficient.
+
+#### Scalar operators
+
+| Call | Result | Description |
+|---|---|---|
+| `lap(f)` | `Term` | $\nabla^2 f$ — central FD Laplacian summed over active axes |
+| `lap(f, c)` | `Term` | $c \,\nabla^2 f$ |
+| `grad(f, axis)` | `Term` | $\partial f / \partial x_\text{axis}$ — single-axis central FD gradient |
+| `grad(f, axis, c)` | `Term` | $c \,\partial f / \partial x_\text{axis}$ |
+
+#### Vector operators
+
+| Call | Result | Description |
+|---|---|---|
+| `lap(vf)` | `VectorRHSExpr` | Component-wise $\nabla^2$: component $c$ is `lap(vf[c])` |
+| `lap(vf, c)` | `VectorRHSExpr` | $c \,\nabla^2 \mathbf{v}$ |
+| `grad(f)` | `VectorRHSExpr` | Full gradient vector: component $c$ is `grad(f, c)` |
+| `grad(f, c)` | `VectorRHSExpr` | $c\,\nabla f$ |
+| `div(vf)` | `RHSExpr` | $\nabla \cdot \mathbf{v} = \sum_c \partial v_c / \partial x_c$ |
+| `div(vf, c)` | `RHSExpr` | $c\,\nabla \cdot \mathbf{v}$ |
+| `curl(vf)` | `VectorRHSExpr` | $\nabla \times \mathbf{v}$ (3-D only) |
+| `curl(vf, c)` | `VectorRHSExpr` | $c\,(\nabla \times \mathbf{v})$ |
+
+---
+
+### Pointwise Custom Operator `pw`
+
+`pw` applies a user-supplied functor element-wise and runs on both CPU and GPU.  The functor must be marked `__host__ __device__` (or use `--expt-extended-lambda` extended lambdas).
+
+#### Single-field form
+
+```cpp
+// rhs[idx] += coeff * func(f[idx])
+Term pw(const ScalarField& f,  Functor func,  double coeff = 1.0);
+```
+
+```cpp
+// double-well derivative  φ(1 − φ²)
+auto t = pw(phi, [] __host__ __device__ (double p) { return p*(1.0 - p*p); });
+```
+
+#### Two-field form
+
+```cpp
+// rhs[idx] += coeff * func(f1[idx], f2[idx])
+Term pw(const ScalarField& f1, const ScalarField& f2,
+        Functor func, double coeff = 1.0);
+```
+
+```cpp
+auto t = pw(phi, mu, [] __host__ __device__ (double p, double m) {
+    return p * m;
+});
+```
+
+#### Three-field form
+
+```cpp
+// rhs[idx] += coeff * func(f1[idx], f2[idx], f3[idx])
+Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
+        Functor func, double coeff = 1.0);
+```
+
+#### Vector-field forms
+
+| Signature | Result | Description |
+|---|---|---|
+| `pw(vf, func, c)` | `VectorRHSExpr` | Per-component unary: component $i$ applies `func(vf[i][idx])` |
+| `pw(vf, sf, func, c)` | `VectorRHSExpr` | Per-component binary with scalar field: `func(vf[i][idx], sf[idx])` |
+| `pw(vf1, vf2, func, c)` | `VectorRHSExpr` | Component-wise binary: `func(vf1[i][idx], vf2[i][idx])` |
+
+All fields passed to the same `pw` call must share identical mesh dimensions and ghost width; a mismatch throws `std::invalid_argument`.
+
+---
+
+### Composing RHS Expressions
+
+`Term` and `RHSExpr`/`VectorRHSExpr` support the following arithmetic for building compound expressions:
+
+| Expression | Meaning |
+|---|---|
+| `t1 + t2` | Sum of two terms → `RHSExpr` |
+| `t1 - t2` | Difference → `RHSExpr` |
+| `s * t`, `t * s` | Scale a term coefficient |
+| `t / s` | Divide term coefficient |
+| `-t` | Negate term coefficient |
+| `expr + t`, `expr - t` | Append a term to an expression |
+| `expr1 + expr2` | Concatenate two expressions |
+| `s * expr` | Scale all term coefficients |
+| `ve1 + ve2`, `ve1 - ve2` | Component-wise addition/subtraction of `VectorRHSExpr` |
+| `s * ve`, `ve * s` | Scale all components |
+| `-ve` | Negate all components |
+
+Full example — Cahn–Hilliard (split form):
+
+```cpp
+double M = 1.0, kappa = 0.5;
+
+// chemical potential  μ = φ³ − φ − κ ∇²φ
+eq_mu.setRHS(
+    pw(phi, phi, phi, [] __host__ __device__ (double a, double b, double c) {
+        return a * b * c;           // φ³
+    })
+    - phi                           // −φ
+    - kappa * lap(phi)              // −κ ∇²φ
+);
+
+// order parameter  ∂φ/∂t = M ∇²μ
+eq_phi.setRHS(M * lap(mu));
+```
+
+---
+
 ## File Locations
 
 | File | Purpose |
 |------|---------|
-| `include/field/Field.h` | Class declaration and inline index methods |
+| `include/field/Field.h` | `Field` class declaration and inline index methods |
 | `src/field/Field.cu` | Constructor, GPU management, and IO (requires nvcc) |
+| `include/equation/Term.h` | `Term`, `RHSExpr`, `VectorRHSExpr`, operator factory declarations |
+| `include/equation/TermPW.inl` | `pw` template definitions and GPU kernels (included by `Term.h`) |
+| `include/equation/FieldOps.inl` | `ScalarField` arithmetic operator overloads (included by `TermPW.inl`) |

@@ -45,11 +45,14 @@ add_library(phix STATIC
     src/field/ScalarField.cu
     src/field/VectorField.cu
     src/boundary/Boundary.cu
+    src/boundary/BCFactory.cpp
     src/equation/Equation.cu
     src/equation/VectorEquation.cu
     src/solver/Solver.cu
     src/solver/VectorSolver.cu
     src/IO/ConfigFile.cpp
+    src/IO/FieldIO.cpp
+    src/IO/OutputWriter.cpp
 )
 
 target_include_directories(phix PUBLIC

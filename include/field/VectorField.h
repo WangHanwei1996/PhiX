@@ -138,10 +138,6 @@ public:
 private:
     std::vector<ScalarField> components_;
 
-    void writeBinary(const std::string& path) const;
-    void writeDat   (const std::string& path) const;
-    void writeVts   (const std::string& path) const;
-
     static std::string componentName(const std::string& baseName,
                                      int c, int nComp);
 };

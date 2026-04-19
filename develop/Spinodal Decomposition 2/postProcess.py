@@ -81,7 +81,7 @@ def plot_snapshot(path, out_dir, show=False):
                    vmin=vmin, vmax=vmax,
                    interpolation="nearest")
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label(f"{name}")
+    cbar.set_label(f"{name}  ({range_label})")
     cbar.locator = ticker.MaxNLocator(nbins=5)
     cbar.update_ticks()
 

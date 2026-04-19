@@ -4,12 +4,40 @@
         "nx": 200,      // x 方向格点数
         "ny": 200,      // y 方向格点数
 
-        // 格距 (物理单位: µm 或无量纲)
+        // 单元大小 (物理单位: 无量纲)
         "dx": 1.0,
         "dy": 1.0,
 
         // 原点坐标
         "x0": 0.0,
         "y0": 0.0
+    },
+
+    
+    "initialize": {
+        "start_from": "100",    // 初始化方式: "initial_field" 或 指定时间步
+        "dt"        : 0.001,
+        "nSteps"    : 10000000
+    },
+
+    "boundary_conditions": {
+        "x_min": "Periodic",    // x 方向最小边界条件: "Periodic" 或 "NoFlux"
+        "x_max": "Periodic",    // x 方向最大边界条件: "Periodic" 或 "NoFlux"
+        "y_min": "Periodic",    // y 方向最小边界条件: "Periodic" 或 "NoFlux"
+        "y_max": "Periodic"     // y 方向最大边界条件: "Periodic" 或 "NoFlux"
+    },
+
+    "constants": {
+        "M": 5.0,              
+        "kappa": 2.0,           
+        "rho": 5.0,           
+        "ca": 0.3,             
+        "cb": 0.7              
+    },
+
+    "output": {
+        "print_interval": 10000,        // 打印间隔 (时间步数)
+        "write_interval": 100000,       // 输出间隔 (时间步数)
+        "format"        : "ALL"         // 输出格式: "BINARY", "DAT","VTK" 或 "ALL"
     }
 }

@@ -21,7 +21,7 @@
 
                  eta(x,y) = ε_eta * {cos(0.01x-4)cos(0.017y)
                                     +cos(0.12x)cos(0.12y)
-                                    +psi[cos(0.047x)+0.0415y*cos(0.032x-0.005y)]^2}^2
+                                    +psi[cos(0.047x+0.0415y)*cos(0.032x-0.005y)]^2}^2
 
                  
     Parameters  : M=5, ρ=sqrt(2), ca=0.3, cb=0.7, κ_c=3, κ_eta=3, L=5, w=1, c0=0.5, ϵ=0.05, ε_eta=0.1, psi=1.5
@@ -85,7 +85,7 @@ int main() {
         double val_eta = eps_eta * pow(
             cos(0.01 * x - 4) * cos(0.017 * y)
             + cos(0.12 * x) * cos(0.12 * y)
-            + psi * pow(cos(0.047 * x) + 0.0415 * y * cos(0.032 * x - 0.005 * y), 2), 2
+            + psi * pow(cos(0.047 * x + 0.0415 * y) * cos(0.032 * x - 0.005 * y), 2), 2
         );
 
         eta.curr[eta.index(i, j)] = val_eta;
@@ -115,26 +115,14 @@ int main() {
     Equation eq_2(c, "CH_2");
     Equation eq_3(eta, "AC");
   
-    eq_1.params["rho"] = sqrt(2);
-    eq_1.params["ca"] = 0.3;
-    eq_1.params["cb"] = 0.7;
-    eq_1.params["kappa_c"] = 3.0;
-
-    eq_2.params["M"] = 5.0;
-
-    eq_3.params["rho"] = sqrt(2);
-    eq_3.params["L"] = 5.0;
-    eq_3.params["w"] = 1.0;
-    eq_3.params["kappa_eta"] = 3.0;
-
-    const double rho = eq_1.params["rho"];
-    const double ca = eq_1.params["ca"];
-    const double cb = eq_1.params["cb"];
-    const double kappa = eq_1.params["kappa_c"];
-    const double M = eq_2.params["M"];
-    const double L = eq_3.params["L"];
-    const double w = eq_3.params["w"];
-    const double kappa_eta = eq_3.params["kappa_eta"];
+    const double rho       = sqrt(2);
+    const double ca        = 0.3;
+    const double cb        = 0.7;
+    const double kappa     = 3.0;
+    const double M         = 5.0;
+    const double L         = 5.0;
+    const double w         = 1.0;
+    const double kappa_eta = 3.0;
 
     eq_1.setRHS(
         pw(c, [rho, ca] __host__ __device__ (double c_val) {

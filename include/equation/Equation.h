@@ -3,7 +3,6 @@
 #include "equation/Term.h"
 #include "field/ScalarField.h"
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -30,7 +29,6 @@ public:
     std::string              name;
     ScalarField&                   unknown;     // the d/dt field (non-owning ref)
     std::vector<ScalarField*>      auxFields;   // other fields used on RHS (non-owning)
-    std::map<std::string, double> params; // named physical constants
 
     explicit Equation(ScalarField& unknown, const std::string& name = "");
 

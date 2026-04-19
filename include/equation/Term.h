@@ -6,7 +6,7 @@
 // Requires nvcc compilation (CUDA device code is referenced by templates).
 //
 // Scalar DSL usage:
-//   eq.setRHS(M * lap(phi) + M * pw(phi, [] __host__ __device__ (double p) {
+//   eq.setRHS(M * lap(phi) + M * pw(phi, PHIX_FN (double p) {
 //       return p - p*p*p; }));
 //
 // Vector DSL usage:
@@ -18,6 +18,10 @@
 
 #include "field/ScalarField.h"
 #include "field/VectorField.h"
+
+// Convenience macro for pw() lambdas — avoids repeating __host__ __device__
+// Usage:  pw(c, PHIX_FN (double c_val) { return ...; })
+#define PHIX_FN [=] __host__ __device__
 
 #include <functional>
 #include <vector>

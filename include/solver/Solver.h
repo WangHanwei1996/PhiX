@@ -5,6 +5,7 @@
 #include "field/ScalarField.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,24 +20,52 @@ enum class TimeScheme {
 };
 
 // ---------------------------------------------------------------------------
+// EquationType — how a Solver step updates its unknown field
+//
+//   TRANSIENT : d(unknown)/dt = RHS  →  unknown += dt * RHS  (time integration)
+//   STEADY    : unknown       = RHS  →  unknown  = RHS        (direct assignment)
+// ---------------------------------------------------------------------------
+enum class EquationType {
+    TRANSIENT,
+    STEADY
+};
+
+// ---------------------------------------------------------------------------
+// SolverStep — one equation in a multi-step advance sequence
+//
+// Before evaluating the equation the solver applies `bcs` to `sourceField`
+// (refreshing ghost cells).  `type` controls how the unknown is updated.
+//
+// Example (Cahn-Hilliard):
+//   {&c,  {&bc_x, &bc_y}, &eq_mu, EquationType::STEADY},    // mu = f'(c) - κ∇²c
+//   {&mu, {&bc_x, &bc_y}, &eq_c,  EquationType::TRANSIENT}  // dc/dt = M∇²μ
+// ---------------------------------------------------------------------------
+struct SolverStep {
+    ScalarField*                    sourceField;  ///< field whose ghost cells to refresh
+    std::vector<BoundaryCondition*> bcs;          ///< BCs applied to sourceField
+    Equation*                       equation;     ///< equation to evaluate
+    EquationType                    type = EquationType::TRANSIENT;
+};
+
+// ---------------------------------------------------------------------------
 // Solver
 //
-// Drives explicit time advancement of one Equation.
+// Drives explicit time advancement of one or more Equations.
 //
-// Responsibilities:
-//   1. Apply boundary conditions (ghost cell update) before each RHS eval.
-//   2. Call equation.computeRHS(rhs) to fill the right-hand side field.
-//   3. Advance unknown field by dt using the chosen TimeScheme.
-//   4. Call equation.unknown.advanceTimeLevelGPU() to shift curr -> prev.
-//
-// The Solver owns the internal scratch fields (rhs, k1..k4 for RK4).
-// All other objects (Equation, BCs) are non-owning references/pointers.
-//
-// Usage:
+// --- Single-equation mode (original API, unchanged) ---
 //   Solver solver(eq, {&bc_x, &bc_y}, dt, TimeScheme::EULER);
-//   solver.run(1000, [&](const Solver& s) {
-//       if (s.step % 100 == 0) phi.downloadCurrFromDevice(), phi.write(...);
-//   });
+//
+// --- Multi-step mode (new: STEADY + TRANSIENT equations) ---
+//   Solver solver({
+//       {&c,  {&bc_x, &bc_y}, &eq_mu, EquationType::STEADY},
+//       {&mu, {&bc_x, &bc_y}, &eq_c,  EquationType::TRANSIENT}
+//   }, dt);
+//   solver.run(nSteps, ...);
+//
+// Notes:
+//   - Multi-step mode currently supports Euler only.
+//   - The Solver owns internal scratch fields.
+//   - All other objects are non-owning references/pointers.
 // ---------------------------------------------------------------------------
 
 class Solver {
@@ -44,8 +73,15 @@ public:
     // -----------------------------------------------------------------------
     // Construction
     // -----------------------------------------------------------------------
+
+    // Single-equation mode
     Solver(Equation&                           equation,
            std::vector<BoundaryCondition*>     bcs,
+           double                              dt,
+           TimeScheme                          scheme = TimeScheme::EULER);
+
+    // Multi-step mode (ordered STEADY/TRANSIENT equations, Euler only)
+    Solver(std::vector<SolverStep>             steps,
            double                              dt,
            TimeScheme                          scheme = TimeScheme::EULER);
 
@@ -99,7 +135,12 @@ private:
     // RK4 also needs a temporary copy of phi to evaluate mid-stages
     ScalarField phi_tmp_;
 
-    bool use_rk4_ = false;
+    bool use_rk4_   = false;
+
+    // Multi-step mode
+    bool                                         multiStep_ = false;
+    std::vector<SolverStep>                      steps_;
+    std::vector<std::unique_ptr<ScalarField>>    stepScratch_;  // rhs scratch per step (null for STEADY)
 
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -114,6 +155,10 @@ private:
     // RK4 sub-steps
     void rk4AdvanceGPU();
     void rk4AdvanceCPU();
+
+    // Multi-step advance (Euler)
+    void multiStepAdvanceGPU();
+    void multiStepAdvanceCPU();
 };
 
 } // namespace PhiX

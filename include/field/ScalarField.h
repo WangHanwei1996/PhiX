@@ -1,21 +1,13 @@
 #pragma once
 
 #include "mesh/Mesh.h"
+#include "IO/FieldFormat.h"
 
 #include <string>
 #include <vector>
 #include <cstddef>
 
 namespace PhiX {
-
-// ---------------------------------------------------------------------------
-// Output format selector used by ScalarField::write()
-// ---------------------------------------------------------------------------
-enum class FieldFormat {
-    BINARY,   ///< Custom binary format (.field)  — default; smallest files
-    DAT,      ///< ASCII text with x y z value columns — easy for gnuplot/matplotlib
-    VTS       ///< VTK XML StructuredGrid (.vts) — opens directly in ParaView/VisIt
-};
 
 // ---------------------------------------------------------------------------
 // ScalarField
@@ -151,11 +143,6 @@ public:
 
     // Human-readable summary (name, dims, ghost, curr min/max/mean)
     void print() const;
-
-private:
-    void writeBinary(const std::string& path) const;
-    void writeDat   (const std::string& path) const;
-    void writeVts   (const std::string& path) const;
 };
 
 // ---------------------------------------------------------------------------

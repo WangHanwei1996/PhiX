@@ -1,46 +1,42 @@
 /***********************************************************************\
-        
-        Spinodal Decomposition: Cahn-Hillard Equation
-
-    dc^{n+1}/dt = M∇²μ^{n}
-    μ^{n} = 2ρ(c^{n} - ca)(c^{n} - cb)(2c^{n} - ca - cb) - κ∇²c^{n}
-
-    Domain     : 200 × 200,  dx = dy = 1.0
-    BC         : periodic in both directions
-    Time Scheme: Euler explicit
-    IC         : c(x,y)=c0+ϵ{cos(0.105x)cos(0.11y)
-                 +[cos(0.13x)cos(0.087y)]^2
-                 +cos(0.025x−0.15y)cos(0.07x−0.02y)}
-
-    Parameters  : M=5, ρ=5, ca=0.3, cb=0.7, κ=2, c0=0.5, ϵ=0.01
-
+ *
+ *  Cahn-Hilliard Solver — Double-Well Free Energy (2D)
+ *
+ *  Author : Wang Hanwei
+ *  Email  : wanghanweibnds2015@gmail.com
+ *
+ *  Description
+ *  -----------
+ *  Solves the Cahn-Hilliard equation with a double-well bulk free-energy
+ *  density for spinodal decomposition:
+ *
+ *      dc/dt = M ∇²μ
+ *      μ     = f'(c) − κ ∇²c
+ *      f'(c) = 2ρ (c − ca)(c − cb)(2c − ca − cb)
+ *
  \***********************************************************************/
-
 
 #include "mesh/Mesh.h"
 #include "field/ScalarField.h"
-#include "boundary/PeriodicBC.h"
+#include "boundary/BCFactory.h"
 #include "equation/Equation.h"
 #include "solver/Solver.h"
 #include "IO/ConfigFile.h"
-#include <cstdlib>
-#include <cmath>
-#include <iomanip>
-#include <iostream>
-#include <set>
-#include <string>
-#include <vector>
-#include <filesystem>
+#include "IO/FieldIO.h"
+#include "IO/OutputWriter.h"
 
-int main(int argc, char* argv[]) {
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+int main(int argc, char* argv[])
+{
     using namespace PhiX;
 
-    // -----------------------------------------------------------------------
-    // 1. Mesh  — parameters loaded from a JSONC settings file
-    //    Usage: ./CH_2D [path/to/settings.jsonc]
-    // -----------------------------------------------------------------------
     IO::ConfigFile cfg = IO::ConfigFile::fromArgs(argc, argv);
 
+    // === 1. Mesh =============================================================
     const int    nx = cfg["mesh"]["nx"];
     const double dx = cfg["mesh"]["dx"];
     const double x0 = cfg["mesh"]["x0"];
@@ -53,124 +49,89 @@ int main(int argc, char* argv[]) {
                                     ny, dy, y0);
     mesh.print();
 
-    // -----------------------------------------------------------------------
-    // 2. Field  —  Initial condition
-    // -----------------------------------------------------------------------
-    ScalarField c(mesh, "c", /*ghost=*/1);
+    // === 2. Time parameters ==================================================
+    const double dt     = cfg["initialize"]["dt"];
+    const int    nSteps = cfg["initialize"]["nSteps"];
+
+    // === 3. Fields & initialization ==========================================
+    ScalarField c (mesh, "c",  /*ghost=*/1);
     ScalarField mu(mesh, "mu", /*ghost=*/1);
+    c.fill(0);
+    mu.fill(0);
 
-    double c0 = 0.5;
-    double eps = 0.01;
+    const std::string start_from = cfg["initialize"]["start_from"];
+    const int         start_step = IO::resolveStartStep(start_from);
 
-    for (int j = 0; j < mesh.n[1]; ++j)
-    for (int i = 0; i < mesh.n[0]; ++i) {
-        double x = mesh.coord(0, i);
-        double y = mesh.coord(1, j);
-
-        double val = c0 + eps * (
-              std::cos(0.105 * x) * std::cos(0.11 * y)
-            + std::pow(std::cos(0.13 * x) * std::cos(0.087 * y), 2)
-            + std::cos(0.025 * x - 0.15 * y) * std::cos(0.07 * x - 0.02 * y)
-        );
-
-        c.curr[c.index(i, j)] = val;
-    }
+    IO::initField(c, start_step);
+    if (start_step == 0) IO::initField(mu, start_step);
 
     c.allocDevice();
     c.uploadAllToDevice();
-
-    mu.fill(0.0);
     mu.allocDevice();
     mu.uploadAllToDevice();
 
-    // -----------------------------------------------------------------------
-    // 3. Boundary conditions — periodic everywhere
-    // -----------------------------------------------------------------------
-    PeriodicBC bc_x(Axis::X);
-    PeriodicBC bc_y(Axis::Y);
+    // === 4. Boundary conditions ==============================================
+    auto  bcSet = buildBCs(cfg["boundary_conditions"]);
+    auto& bcs   = bcSet.ptrs;
 
-    // -----------------------------------------------------------------------
-    // 4. Equation  
-    // -----------------------------------------------------------------------
-    Equation eq_1(mu, "CH_1");
-    Equation eq_2(c, "CH_2");
+    // === 5. Equations ========================================================
+    const double rho   = cfg["constants"]["rho"];
+    const double ca    = cfg["constants"]["ca"];
+    const double cb    = cfg["constants"]["cb"];
+    const double kappa = cfg["constants"]["kappa"];
+    const double M     = cfg["constants"]["M"];
 
-    eq_1.params["rho"] = 5.0;
-    eq_1.params["ca"] = 0.3;
-    eq_1.params["cb"] = 0.7;
-    eq_1.params["kappa"] = 2.0;
-    eq_2.params["M"] = 5.0;
-
-    const double rho = eq_1.params["rho"];
-    const double ca = eq_1.params["ca"];
-    const double cb = eq_1.params["cb"];
-    const double kappa = eq_1.params["kappa"];
-    const double M = eq_2.params["M"];
-
-    eq_1.setRHS(
-        pw(c, [rho, ca, cb] __host__ __device__ (double c_val) {
-            return 2.0 * rho * (c_val - ca) * (c_val - cb) * (2.0 * c_val - ca - cb);
+    // μ = f'(c) − κ ∇²c
+    Equation eqMu(mu, "CH_mu");
+    eqMu.setRHS(
+        pw(c, PHIX_FN (double c_val) {
+            return 2.0 * rho * (c_val - ca) * (c_val - cb)
+                       * (2.0 * c_val - ca - cb);
         })
         - kappa * lap(c)
     );
 
-    eq_2.setRHS(
-        M * lap(mu)
-    );
+    // dc/dt = M ∇²μ
+    Equation eqC(c, "CH_c");
+    eqC.setRHS(M * lap(mu));
 
-    // -----------------------------------------------------------------------
-    // 5. Solver
-    // -----------------------------------------------------------------------
-    const double dt      = 0.001;
-    const int    nSteps  = 100000000;   // physical time = 1e5 s
+    // === 6. Solver ===========================================================
+    //  eqMu (STEADY)    — algebraic: μ = f'(c) − κ∇²c
+    //  eqC  (TRANSIENT) — time-integrated: dc/dt = M∇²μ
+    Solver solver(
+        {
+            { &c,  bcs, &eqMu, EquationType::STEADY    },
+            { &mu, bcs, &eqC,  EquationType::TRANSIENT }
+        },
+        dt, TimeScheme::EULER);
 
-    // Output at logarithmically spaced times: 0.1, 1, 10, 100, 1000, 1e4, 1e5 s
-    const std::vector<double> out_times = {0.1, 1.0, 10.0, 100.0, 1000.0, 1e4, 1e5};
-    // Convert to step numbers (round to nearest)
-    std::set<int> out_steps;
-    for (double t : out_times) {
-        int step = static_cast<int>(std::round(t / dt));
-        if (step <= nSteps) out_steps.insert(step);
+    solver.step = start_step;
+    solver.time = start_step * dt;
+
+    // === 7. Output & time loop ===============================================
+    IO::OutputWriter writer(cfg["output"]);
+
+    if (start_step == 0) {
+        writer.writeFields(c, 0, solver.time);
+        std::cout << "Starting Cahn-Hilliard simulation ("
+                  << nSteps << " steps, dt=" << dt << ")\n";
+    } else {
+        std::cout << "Resuming Cahn-Hilliard simulation from step " << start_step
+                  << " (t=" << start_step * dt << "), "
+                  << nSteps - start_step << " steps remaining, dt=" << dt
+                  << "\n";
     }
 
-    // eq_1: μ = f'(c) - κ∇²c   (auxiliary, not time-integrated)
-    // eq_2: dc/dt = M∇²μ        (time-integrated by Solver)
-    Solver solver(eq_2, {&bc_x, &bc_y}, dt, TimeScheme::EULER);
+    writer.resetTimer();
 
-    std::filesystem::create_directories("output");
-
-    // Write initial state (step 0, t = 0)
-    c.downloadCurrFromDevice();
-    c.write("output/c_0.field");
-    std::cout << "Starting Cahn-Hilliard simulation ("
-              << nSteps << " steps, dt=" << dt << ")\n";
-    std::cout << "  step 0  t=0  written: output/c_0.field\n";
-
-    for (int s = 0; s < nSteps; ++s) {
-        // Step 1: Apply BCs to c, compute μ^n = f'(c^n) - κ∇²c^n
-        bc_x.applyOnGPU(c);
-        bc_y.applyOnGPU(c);
-        eq_1.computeRHS(mu);   // writes physical cells of mu.d_curr
-
-        // Step 2: Apply BCs to μ (fill ghost cells for ∇²μ stencil)
-        bc_x.applyOnGPU(mu);
-        bc_y.applyOnGPU(mu);
-
-        // Step 3: Advance c^{n+1} = c^n + dt * M∇²μ^n
+    for (int step = start_step; step < nSteps; ++step) {
         solver.advance();
 
-        if (solver.step % 10000 == 0)
-            std::cout << "  [progress] step=" << solver.step
-                      << "  t=" << solver.time << "\n" << std::flush;
+        if (writer.shouldPrint(solver.step))
+            writer.printProgress(solver.step, solver.time);
 
-        if (out_steps.count(solver.step)) {
-            c.downloadCurrFromDevice();
-            std::string path = "output/c_" + std::to_string(solver.step) + ".field";
-            c.write(path);
-            std::cout << "  step " << solver.step
-                      << "  t=" << solver.time
-                      << "  written: " << path << "\n" << std::flush;
-        }
+        if (writer.shouldWrite(solver.step))
+            writer.writeFields(c, solver.step, solver.time);
     }
 
     std::cout << "Done.\n";

@@ -2,7 +2,7 @@
         
         Spinodal Decomposition: Cahn-Hillard Equation
 
-    dc^{n+1}/dt = M∇²μ^{n}
+    c^{n+1} = c^{n} + dt * M∇²μ^{n}
     μ^{n} = 2ρ(c^{n} - ca)(c^{n} - cb)(2c^{n} - ca - cb) - κ∇²c^{n}
 
     Domain     : 200 × 200,  dx = dy = 1.0

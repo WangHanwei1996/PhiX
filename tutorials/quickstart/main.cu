@@ -59,9 +59,7 @@ int main() {
     // 4. Equation  —  dφ/dt = M∇²φ + M(φ - φ³)
     // -----------------------------------------------------------------------
     Equation eq(phi, "AllenCahn");
-    eq.params["M"] = 1.0;
-
-    const double M = eq.params["M"];
+    const double M = 1.0;
 
     eq.setRHS(
         M * lap(phi)

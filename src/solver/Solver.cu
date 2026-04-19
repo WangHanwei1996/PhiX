@@ -1,6 +1,7 @@
 #include "solver/Solver.h"
 
 #include <cuda_runtime.h>
+#include <memory>
 #include <stdexcept>
 
 namespace PhiX {
@@ -103,6 +104,43 @@ Solver::Solver(Equation&                       equation,
         throw std::runtime_error(
             "Solver: equation.unknown must have device memory allocated "
             "before constructing the Solver.");
+}
+
+// ---------------------------------------------------------------------------
+// Multi-step constructor
+// ---------------------------------------------------------------------------
+Solver::Solver(std::vector<SolverStep> steps,
+               double                  dt_,
+               TimeScheme              scheme_)
+    : dt(dt_)
+    , scheme(scheme_)
+    , equation_(*steps.at(0).equation)          // dummy ref: first equation
+    , bcs_({})
+    , rhs_(makeScratch(steps[0].equation->unknown, "_ms_rhs"))
+    , k1_(makeScratch(steps[0].equation->unknown, "_k1"))
+    , k2_(makeScratch(steps[0].equation->unknown, "_k2"))
+    , k3_(makeScratch(steps[0].equation->unknown, "_k3"))
+    , k4_(makeScratch(steps[0].equation->unknown, "_k4"))
+    , phi_tmp_(makeScratch(steps[0].equation->unknown, "_phi_tmp"))
+    , use_rk4_(false)
+    , multiStep_(true)
+    , steps_(std::move(steps))
+{
+    for (std::size_t i = 0; i < steps_.size(); ++i) {
+        auto& s = steps_[i];
+        if (!s.equation->unknown.deviceAllocated())
+            throw std::runtime_error(
+                "Solver (multi-step): all equation unknowns must have device "
+                "memory allocated before constructing the Solver.");
+        if (s.type == EquationType::TRANSIENT) {
+            stepScratch_.push_back(
+                std::make_unique<ScalarField>(
+                    makeScratch(s.equation->unknown,
+                                s.equation->name + "_rhs")));
+        } else {
+            stepScratch_.push_back(nullptr);
+        }
+    }
 }
 
 // ===========================================================================
@@ -234,13 +272,6 @@ void Solver::rk4AdvanceCPU() {
     std::size_t N    = phi.size();
     double dt2 = dt * 0.5, dt6 = dt / 6.0;
 
-    auto evalRHS = [&](std::vector<double>& ki) {
-        std::swap(phi, tmp);
-        equation_.computeRHSCPU(rhs_);
-        std::copy(rhs_.curr.begin(), rhs_.curr.end(), ki.begin());
-        std::swap(phi, tmp);
-    };
-
     // k1
     applyBCsCPU();
     equation_.computeRHSCPU(rhs_);
@@ -274,32 +305,95 @@ void Solver::rk4AdvanceCPU() {
 }
 
 // ===========================================================================
+// Multi-step advance (Euler only)
+//
+// For each SolverStep in order:
+//   1. Apply bcs to sourceField (ghost cell refresh).
+//   2. STEADY:    equation.unknown = RHS  (computeRHS writes directly to unknown)
+//   3. TRANSIENT: scratch = RHS, then unknown += dt * scratch
+// After all steps, call advanceTimeLevelGPU for TRANSIENT unknowns.
+// ===========================================================================
+
+void Solver::multiStepAdvanceGPU() {
+    for (std::size_t i = 0; i < steps_.size(); ++i) {
+        auto& s = steps_[i];
+        for (auto* bc : s.bcs) bc->applyOnGPU(*s.sourceField);
+
+        if (s.type == EquationType::STEADY) {
+            // Write RHS directly into the unknown field (overwrite)
+            s.equation->computeRHS(s.equation->unknown);
+        } else {
+            // Compute RHS into scratch, then axpy
+            s.equation->computeRHS(*stepScratch_[i]);
+            int n = static_cast<int>(s.equation->unknown.storedSize);
+            kernel_axpy<<<(n + 255) / 256, 256>>>(
+                s.equation->unknown.d_curr,
+                stepScratch_[i]->d_curr,
+                dt, n);
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+    }
+    for (auto& s : steps_)
+        if (s.type == EquationType::TRANSIENT)
+            s.equation->unknown.advanceTimeLevelGPU();
+}
+
+void Solver::multiStepAdvanceCPU() {
+    for (std::size_t i = 0; i < steps_.size(); ++i) {
+        auto& s = steps_[i];
+        for (auto* bc : s.bcs) bc->applyOnCPU(*s.sourceField);
+
+        if (s.type == EquationType::STEADY) {
+            s.equation->computeRHSCPU(s.equation->unknown);
+        } else {
+            s.equation->computeRHSCPU(*stepScratch_[i]);
+            auto& phi = s.equation->unknown.curr;
+            auto& rhs = stepScratch_[i]->curr;
+            for (std::size_t j = 0; j < phi.size(); ++j)
+                phi[j] += dt * rhs[j];
+        }
+    }
+    for (auto& s : steps_)
+        if (s.type == EquationType::TRANSIENT)
+            s.equation->unknown.advanceTimeLevelCPU();
+}
+
+// ===========================================================================
 // Public advance / advanceCPU
 // ===========================================================================
 
 void Solver::advance() {
-    if (use_rk4_) {
-        rk4AdvanceGPU();
+    if (multiStep_) {
+        multiStepAdvanceGPU();   // handles advanceTimeLevel internally
     } else {
-        applyBCsGPU();
-        equation_.computeRHS(rhs_);
-        eulerUpdateGPU();
-        CUDA_CHECK(cudaDeviceSynchronize());
+        if (use_rk4_) {
+            rk4AdvanceGPU();
+        } else {
+            applyBCsGPU();
+            equation_.computeRHS(rhs_);
+            eulerUpdateGPU();
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+        equation_.unknown.advanceTimeLevelGPU();
     }
-    equation_.unknown.advanceTimeLevelGPU();
     ++step;
     time += dt;
 }
 
 void Solver::advanceCPU() {
-    if (use_rk4_) {
-        rk4AdvanceCPU();
+    if (multiStep_) {
+        multiStepAdvanceCPU();   // handles advanceTimeLevel internally
     } else {
-        applyBCsCPU();
-        equation_.computeRHSCPU(rhs_);
-        eulerUpdateCPU();
+        if (use_rk4_) {
+            rk4AdvanceCPU();
+        } else {
+            applyBCsCPU();
+            equation_.computeRHSCPU(rhs_);
+            eulerUpdateCPU();
+        }
+        equation_.unknown.advanceTimeLevelCPU();
     }
-    equation_.unknown.advanceTimeLevelCPU();
     ++step;
     time += dt;
 }

@@ -1,17 +1,20 @@
 /***********************************************************************\
         
-        Spinodal Decomposition: Cahn-Hillard Equation
+                            GFA of FeB
 
-    dc^{n+1}/dt = M∇²μ^{n}
-    μ^{n} = 2ρ(c^{n} - ca)(c^{n} - cb)(2c^{n} - ca - cb) - κ∇²c^{n}
+    Expression : #TODO
 
-    Domain     : 200 × 200,  dx = dy = 1.0
-    BC         : periodic in both directions
+    Domain     : 600 × 600,  dx = dy = 3.0e-4
+    BC         : NoFlux in both directions
     Time Scheme: Euler explicit
-    IC         : c(x,y)=c0+ϵ{cos(0.105x)cos(0.11y)
-                 +[cos(0.13x)cos(0.087y)]^2
-                 +cos(0.025x−0.15y)cos(0.07x−0.02y)}
+    IC         : r<2*dx - crystal
+                 otherwise - amorphous
 
+    Notes      : phi=0, eta=0 - liquid
+                 phi=1, eta=0 - crystal
+                 phi=0, eta=1 - amorphous
+                 phi=1, eta=1 - non-existed
+                 
     Parameters  : M=5, ρ=5, ca=0.3, cb=0.7, κ=2, c0=0.5, ϵ=0.01
 
  \***********************************************************************/

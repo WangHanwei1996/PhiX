@@ -1,10 +1,11 @@
 """
-develop/Spinodal Decomposition/postProcess.py
+develop/Ostwald_Ripening/postProcess.py
 
-Read PhiX .field snapshots from output/ and plot concentration field c.
+Read PhiX .field snapshots from output/ and plot concentration c and
+order-parameter eta side by side.
 
 Usage:
-    python postProcess.py              # plot all snapshots, save to output/png/
+    python postProcess.py              # plot all matched pairs, save to output/png/
     python postProcess.py --show       # also display interactively
     python postProcess.py --step 5000  # plot a single step
 """
@@ -60,38 +61,58 @@ def read_field(path):
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_snapshot(path, out_dir, show=False):
-    data, meta = read_field(path)
+def plot_snapshot(c_path, eta_path, out_dir, show=False):
+    c_data,   c_meta   = read_field(c_path)
+    eta_data, eta_meta = read_field(eta_path)
 
-    arr = np.squeeze(data)          # (ny, nx) for 2-D fields
+    c_arr   = np.squeeze(c_data)    # (ny, nx)
+    eta_arr = np.squeeze(eta_data)  # (ny, nx)
 
-    step = _step_from_path(path)
-    name = meta.get("name", "c")
+    step = _step_from_path(c_path)
 
-    # Step 0: use adaptive range to inspect the initial condition
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+
+    # ---- c field ----
     if step == 0:
-        vmin, vmax = arr.min(), arr.max()
-        range_label = f"adaptive [{vmin:.4f}, {vmax:.4f}]"
+        vmin_c, vmax_c = c_arr.min(), c_arr.max()
+        c_range = f"adaptive [{vmin_c:.4f}, {vmax_c:.4f}]"
     else:
-        vmin, vmax = 0.0, 1.0
-        range_label = "fixed [0, 1]"
+        vmin_c, vmax_c = 0.0, 1.0
+        c_range = "fixed [0, 1]"
 
-    fig, ax = plt.subplots(figsize=(5, 4.5))
-    im = ax.imshow(arr, origin="lower", cmap="coolwarm",
-                   vmin=vmin, vmax=vmax,
-                   interpolation="nearest")
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label(f"{name}")
-    cbar.locator = ticker.MaxNLocator(nbins=5)
-    cbar.update_ticks()
+    im0 = axes[0].imshow(c_arr, origin="lower", cmap="coolwarm",
+                         vmin=vmin_c, vmax=vmax_c, interpolation="nearest")
+    cbar0 = fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    # cbar0.set_label(f"c")
+    cbar0.locator = ticker.MaxNLocator(nbins=5)
+    cbar0.update_ticks()
+    axes[0].set_title("Concentration  c")
+    axes[0].set_xlabel("x  [cells]")
+    axes[0].set_ylabel("y  [cells]")
 
-    ax.set_title(f"Cahn–Hilliard  |  step = {step}")
-    ax.set_xlabel("x  [cells]")
-    ax.set_ylabel("y  [cells]")
+    # ---- eta field ----
+    if step == 0:
+        vmin_e, vmax_e = eta_arr.min(), eta_arr.max()
+        e_range = f"adaptive [{vmin_e:.4f}, {vmax_e:.4f}]"
+    else:
+        vmin_e, vmax_e = 0.0, 1.0
+        e_range = "fixed [0, 1]"
+
+    im1 = axes[1].imshow(eta_arr, origin="lower", cmap="coolwarm",
+                         vmin=vmin_e, vmax=vmax_e, interpolation="nearest")
+    cbar1 = fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    # cbar1.set_label(f"eta")
+    cbar1.locator = ticker.MaxNLocator(nbins=5)
+    cbar1.update_ticks()
+    axes[1].set_title("Order parameter  η")
+    axes[1].set_xlabel("x  [cells]")
+    axes[1].set_ylabel("y  [cells]")
+
+    fig.suptitle(f"Allen-Cahn / Cahn-Hilliard  |  step = {step}", fontsize=13)
     fig.tight_layout()
 
     os.makedirs(out_dir, exist_ok=True)
-    save_path = os.path.join(out_dir, f"{name}_{step:08d}.png")
+    save_path = os.path.join(out_dir, f"snapshot_{step:08d}.png")
     fig.savefig(save_path, dpi=150)
     print(f"  saved: {save_path}")
 
@@ -112,7 +133,7 @@ def _step_from_path(path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Post-process Cahn-Hilliard PhiX .field files")
+        description="Post-process Allen-Cahn / Cahn-Hilliard PhiX .field files")
     parser.add_argument("--step", type=int, default=None,
                         help="Plot a single step number (default: all)")
     parser.add_argument("--input-dir", default="output",
@@ -124,20 +145,30 @@ def main():
     args = parser.parse_args()
 
     if args.step is not None:
-        pattern = os.path.join(args.input_dir, f"*_{args.step}.field")
+        c_files = sorted(glob.glob(
+            os.path.join(args.input_dir, f"c_{args.step}.field")))
     else:
-        pattern = os.path.join(args.input_dir, "*.field")
+        c_files = sorted(
+            glob.glob(os.path.join(args.input_dir, "c_*.field")),
+            key=_step_from_path)
 
-    files = sorted(glob.glob(pattern), key=_step_from_path)
-
-    if not files:
-        print(f"No .field files found matching: {pattern}")
+    if not c_files:
+        print(f"No c_*.field files found in: {args.input_dir}")
         return
 
-    print(f"Found {len(files)} snapshot(s). Plotting...")
-    for path in files:
-        plot_snapshot(path, args.output_dir, show=args.show)
+    print(f"Found {len(c_files)} c snapshot(s). Plotting...")
+    missing = 0
+    for c_path in c_files:
+        step = _step_from_path(c_path)
+        eta_path = os.path.join(args.input_dir, f"eta_{step}.field")
+        if not os.path.exists(eta_path):
+            print(f"  [skip] step {step}: eta file not found ({eta_path})")
+            missing += 1
+            continue
+        plot_snapshot(c_path, eta_path, args.output_dir, show=args.show)
 
+    if missing:
+        print(f"  ({missing} step(s) skipped due to missing eta file)")
     print("Done.")
 
 
