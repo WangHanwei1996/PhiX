@@ -1,0 +1,40 @@
+{
+    "mesh": {
+        "nx": 200,      // x 方向格点数
+        "ny": 200,      // y 方向格点数
+        "dx": 1.0,      // x 方向格点间距
+        "dy": 1.0,      // y 方向格点间距
+        "x0": 0.0,      // x 方向原点
+        "y0": 0.0       // y 方向原点
+    },
+
+    "initialize": {
+        "start_from": "initial_field",         // "0" 从头开始，或填写时间步数以续算
+        "dt"        : 0.001,
+        "nSteps"    : 1000000
+    },
+
+    "boundary_conditions": {
+        "x_min": "Periodic",
+        "x_max": "Periodic",
+        "y_min": "Periodic",
+        "y_max": "Periodic"
+    },
+
+    "constants": {
+        "M"        : 5.0,                  // 迁移率
+        "rho"      : 1.4142135623730951,   // sqrt(2)，自由能势垒
+        "ca"       : 0.3,                  // 左侧平衡浓度
+        "cb"       : 0.7,                  // 右侧平衡浓度
+        "kappa_c"  : 3.0,                  // 浓度梯度能系数
+        "kappa_eta": 3.0,                  // 序参量梯度能系数
+        "L"        : 5.0,                  // Allen-Cahn 迁移率
+        "w"        : 1.0                   // 双井势垒高度
+    },
+
+    "output": {
+        "print_interval": 10000,           // 打印进度的步数间隔
+        "write_interval": 100000,          // 写出数据的步数间隔
+        "format"        : "ALL"            // "BINARY" | "DAT" | "VTK" | "ALL"
+    }
+}

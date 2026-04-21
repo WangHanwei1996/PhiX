@@ -73,10 +73,8 @@ add_subdirectory(tutorials/quickstart)
 # Applications
 # ---------------------------------------------------------------------------
 add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
-
-# ---------------------------------------------------------------------------
-# Develop
-# ---------------------------------------------------------------------------
+add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
+add_subdirectory("applications/solvers/glass_formation/2D")
 add_subdirectory("develop/Spinodal Decomposition")
 add_subdirectory("develop/Ostwald_Ripening")
 add_subdirectory("develop/fieldOperation")

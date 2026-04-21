@@ -1,0 +1,58 @@
+{
+    "mesh": {
+        "nx": 600,      // x 方向格点数
+        "ny": 600,      // y 方向格点数
+        "dx": 3.0e-4,   // x 方向格点间距 [m]
+        "dy": 3.0e-4,   // y 方向格点间距 [m]
+        "x0": 0.0,      // x 方向原点
+        "y0": 0.0       // y 方向原点
+    },
+
+    "initialize": {
+        "start_from": "initial_field",  // "0" 从头开始，或填写时间步数以续算
+        "dt"        : 1.0e-6,          // 时间步长 [s]
+        "nSteps"    : 1000000
+    },
+
+    "boundary_conditions": {
+        "x_min": "NoFlux",
+        "x_max": "NoFlux",
+        "y_min": "NoFlux",
+        "y_max": "NoFlux"
+    },
+
+    "constants": {
+        // --- 迁移率 ---
+        // M_phi 由公式计算: 22.1 * exp(-140e3 / (R*T))
+        "M_eta"  : 1.0,        // eta (非晶序参量)  Allen-Cahn 迁移率 (常数)
+
+        // --- 扩散系数 ---
+        // D_L 由公式计算: 2e-6 * exp(-1.11e5 / (R*T))
+        // D_S 由公式计算: 1.311e-6 * exp(-1.51e5 / (R*T))
+        "D_Am"   : 3.0e-12,    // 非晶态扩散系数 [m^2/s]
+
+        // --- 梯度能系数 ---
+        "eps_sq"  : 2.86e-3,   // epsilon^2, phi 梯度能系数 [J/m]
+        "beta_sq" : 1.0e-4,   // beta^2,    eta 梯度能系数 [J/m]
+
+        // --- 双井势垒高度 ---
+        "w_phi" : 441.0,       // phi 双井势垒 [J/m^3]
+        "w_eta" : 10.0,       // eta 双井势垒 [J/m^3]
+        "w_ex"  : 100.0,       // phi-eta 交叉耦合系数 [J/m^3]
+
+        // --- 热力学参数 ---
+        "T"     : 1000.0,       // 温度 [K]（全局常数）
+        "T_g"   : 710.0,       // 玻璃化转变温度 [K]
+        "alpha" : 0.45,        // 非晶态参数 (Df^{Am->L} 中的 alpha)
+
+        // --- 摩尔体积 ---
+        "V_m_L" : 2.64e-5,     // 液相摩尔体积 [m^3/mol]
+        "V_m_S" : 2.44e-5      // 固相 (Fe3B) 摩尔体积 [m^3/mol]
+    },
+    
+    "output": {
+        "print_interval": 1000,     // 打印进度的步数间隔
+        "write_interval": 10000,    // 写出数据的步数间隔
+        "format"        : "ALL"      // "BINARY" | "DAT" | "VTK" | "ALL"
+    }
+}

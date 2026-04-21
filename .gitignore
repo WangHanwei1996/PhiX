@@ -18,6 +18,8 @@ develop/Spinodal\ Decomposition/spinodal_decomposition
 
 # Applications executables — explicitly listed
 applications/solvers/Cahn-Hillard_double-well/2D/CH_2D
+applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D/CH_AC_2D
+applications/solvers/glass_formation/2D/GFA_2D
 
 # Output data
 output/
@@ -41,3 +43,13 @@ __pycache__/
 .vscode/
 *.swp
 *~
+
+# Windows metadata
+*:Zone.Identifier
+*Zone.Identifier
+
+# Simulation logs
+run.log
+
+# Video outputs
+*.mp4

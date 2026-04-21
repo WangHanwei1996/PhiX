@@ -15,9 +15,9 @@
 
     
     "initialize": {
-        "start_from": "100",    // 初始化方式: "initial_field" 或 指定时间步
+        "start_from": "initial_field",    // 初始化方式: "initial_field" 或 指定时间步
         "dt"        : 0.001,
-        "nSteps"    : 10000000
+        "nSteps"    : 100000
     },
 
     "boundary_conditions": {
@@ -36,8 +36,8 @@
     },
 
     "output": {
-        "print_interval": 10000,        // 打印间隔 (时间步数)
-        "write_interval": 100000,       // 输出间隔 (时间步数)
+        "print_interval": 1000,        // 打印间隔 (时间步数)
+        "write_interval": 10000,       // 输出间隔 (时间步数)
         "format"        : "ALL"         // 输出格式: "BINARY", "DAT","VTK" 或 "ALL"
     }
 }
