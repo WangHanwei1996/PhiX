@@ -53,7 +53,8 @@ public:
     bool hasRHS() const { return !rhs_expr_.terms.empty(); }
 
 private:
-    RHSExpr rhs_expr_;
+    RHSExpr               rhs_expr_;
+    mutable ScratchPool   scratch_pool_;   // reused across computeRHS calls
 };
 
 } // namespace PhiX

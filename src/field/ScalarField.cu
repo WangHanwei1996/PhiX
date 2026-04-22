@@ -54,6 +54,24 @@ ScalarField::ScalarField(const Mesh& mesh_, const std::string& name_, int ghost_
 }
 
 // ---------------------------------------------------------------------------
+// Shell factory — wraps an externally owned device buffer.  CPU storage is
+// left empty; ownsDeviceMemory_ = false so destructor does not free.
+// ---------------------------------------------------------------------------
+ScalarField ScalarField::makeShell(const Mesh& mesh_, int ghost_,
+                                   double* d_buf,
+                                   const std::string& name_)
+{
+    ScalarField f(mesh_, name_, ghost_);
+    // Drop CPU buffers — a shell only exposes device data.
+    f.curr.clear(); f.curr.shrink_to_fit();
+    f.prev.clear(); f.prev.shrink_to_fit();
+    f.d_curr            = d_buf;
+    f.d_prev            = nullptr;
+    f.ownsDeviceMemory_ = false;
+    return f;
+}
+
+// ---------------------------------------------------------------------------
 // Move semantics
 // ---------------------------------------------------------------------------
 
@@ -66,12 +84,14 @@ ScalarField::ScalarField(ScalarField&& other) noexcept
     , prev(std::move(other.prev))
     , d_curr(other.d_curr)
     , d_prev(other.d_prev)
+    , ownsDeviceMemory_(other.ownsDeviceMemory_)
 {
     storedDims[0] = other.storedDims[0];
     storedDims[1] = other.storedDims[1];
     storedDims[2] = other.storedDims[2];
     other.d_curr = nullptr;
     other.d_prev = nullptr;
+    other.ownsDeviceMemory_ = false;
 }
 
 ScalarField& ScalarField::operator=(ScalarField&& other) noexcept {
@@ -89,6 +109,8 @@ ScalarField& ScalarField::operator=(ScalarField&& other) noexcept {
     prev      = std::move(other.prev);
     d_curr    = other.d_curr;  other.d_curr = nullptr;
     d_prev    = other.d_prev;  other.d_prev = nullptr;
+    ownsDeviceMemory_ = other.ownsDeviceMemory_;
+    other.ownsDeviceMemory_ = false;
     return *this;
 }
 
@@ -148,8 +170,12 @@ void ScalarField::allocDevice() {
 }
 
 void ScalarField::freeDevice() {
-    if (d_curr) { cudaFree(d_curr); d_curr = nullptr; }
-    if (d_prev) { cudaFree(d_prev); d_prev = nullptr; }
+    if (ownsDeviceMemory_) {
+        if (d_curr) { cudaFree(d_curr); }
+        if (d_prev) { cudaFree(d_prev); }
+    }
+    d_curr = nullptr;
+    d_prev = nullptr;
 }
 
 void ScalarField::uploadCurrToDevice() const {

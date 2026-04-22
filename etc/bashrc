@@ -44,4 +44,11 @@ _phix_setup_path() {
 _phix_setup_path
 unset -f _phix_setup_path
 
+# ---------------------------------------------------------------------------
+# whw — Workspace Hub Waypoint: jump to PhiX project root
+# ---------------------------------------------------------------------------
+whw() {
+    cd "$PHIX_DIR" || return
+}
+
 echo "PhiX sourced: PHIX_DIR=$PHIX_DIR"

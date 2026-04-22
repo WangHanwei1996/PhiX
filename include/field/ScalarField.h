@@ -61,6 +61,19 @@ public:
                          const std::string& name,
                          int ghost = 1);
 
+    // -----------------------------------------------------------------------
+    // Shell factory — build a non-owning ScalarField wrapping an externally
+    // managed device buffer (e.g. one obtained from ScratchPool::acquire).
+    //
+    // The returned field has only `d_curr` set (to `d_buf`); `d_prev` and
+    // CPU buffers are unallocated.  The destructor will NOT cudaFree the
+    // wrapped pointer.  Intended for passing scratch buffers through the
+    // BoundaryCondition::applyOnGPU interface.
+    // -----------------------------------------------------------------------
+    static ScalarField makeShell(const Mesh& mesh, int ghost,
+                                 double* d_buf,
+                                 const std::string& name = "shell");
+
     // Non-copyable (owns GPU memory)
     ScalarField(const ScalarField&)            = delete;
     ScalarField& operator=(const ScalarField&) = delete;
@@ -111,6 +124,10 @@ public:
     void downloadPrevFromDevice();      // GPU d_prev -> CPU prev
     void downloadAllFromDevice();
 
+    // True for fields constructed via makeShell() — destructor does NOT free
+    // the wrapped device pointer.
+    bool ownsDeviceMemory() const { return ownsDeviceMemory_; }
+
     // -----------------------------------------------------------------------
     // IO  (physical cells only; ghost cells are NOT persisted)
     //
@@ -143,6 +160,12 @@ public:
 
     // Human-readable summary (name, dims, ghost, curr min/max/mean)
     void print() const;
+
+private:
+    // True for normal ScalarFields (allocDevice cudaMallocs both buffers).
+    // False for shell wrappers built via makeShell() \u2014 destructor will not
+    // cudaFree the wrapped pointer.
+    bool ownsDeviceMemory_ = true;
 };
 
 // ---------------------------------------------------------------------------

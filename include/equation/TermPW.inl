@@ -104,9 +104,16 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
     int sx = f.storedDims[0], sy = f.storedDims[1];
     int g  = f.ghost;
 
+    // Capture pointer-to-field so RK4 d_curr swap remains effective.
+    const ScalarField* pf = &f;
+
     // GPU launcher: host function that launches the templated kernel
-    t.gpu_launcher = [func, nx, ny, nz, sx, sy, g]
-                     (double* d_rhs, const double* d_src, double c) mutable {
+    t.gpu_launcher = [func, pf, nx, ny, nz, sx, sy, g]
+                     (double* d_rhs, double c, ScratchPool&) mutable {
+        const double* d_src = pf->d_curr;
+        if (!d_src)
+            throw std::runtime_error(
+                "pw GPU: source field not on device");
         int total   = nx * ny * nz;
         int threads = 256;
         int blocks  = (total + threads - 1) / threads;
@@ -119,8 +126,9 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
     };
 
     // CPU fallback (Functor::operator() must also work on host)
-    t.cpu_kernel = [func, nx, ny, nz, sx, sy, g]
-                   (double* rhs, const double* src, double c) mutable {
+    t.cpu_kernel = [func, pf, nx, ny, nz, sx, sy, g]
+                   (double* rhs, double c, ScratchPool&) mutable {
+        const double* src = pf->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -157,15 +165,17 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
     int sx = f1.storedDims[0], sy = f1.storedDims[1];
     int g  = f1.ghost;
 
-    // Capture pointer to f2 (non-owning); read d_curr at launch time
+    // Capture pointers (non-owning); read d_curr at launch time
+    const ScalarField* pf1 = &f1;
     const ScalarField* pf2 = &f2;
 
-    t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf2]
-                     (double* d_rhs, const double* d_src1, double c) mutable {
+    t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2]
+                     (double* d_rhs, double c, ScratchPool&) mutable {
+        const double* d_src1 = pf1->d_curr;
         const double* d_src2 = pf2->d_curr;
-        if (!d_src2)
+        if (!d_src1 || !d_src2)
             throw std::runtime_error(
-                "pw(f1,f2) GPU: second field not on device. "
+                "pw(f1,f2) GPU: a field not on device. "
                 "Call allocDevice() and uploadToDevice() first.");
         int total   = nx * ny * nz;
         int threads = 256;
@@ -178,8 +188,9 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
                 std::string("pw2 GPU kernel error: ") + cudaGetErrorString(err));
     };
 
-    t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf2]
-                   (double* rhs, const double* src1, double c) mutable {
+    t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf1, pf2]
+                   (double* rhs, double c, ScratchPool&) mutable {
+        const double* src1 = pf1->curr.data();
         const double* src2 = pf2->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
@@ -217,16 +228,18 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
     int sx = f1.storedDims[0], sy = f1.storedDims[1];
     int g  = f1.ghost;
 
+    const ScalarField* pf1 = &f1;
     const ScalarField* pf2 = &f2;
     const ScalarField* pf3 = &f3;
 
-    t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf2, pf3]
-                     (double* d_rhs, const double* d_src1, double c) mutable {
+    t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2, pf3]
+                     (double* d_rhs, double c, ScratchPool&) mutable {
+        const double* d_src1 = pf1->d_curr;
         const double* d_src2 = pf2->d_curr;
         const double* d_src3 = pf3->d_curr;
-        if (!d_src2 || !d_src3)
+        if (!d_src1 || !d_src2 || !d_src3)
             throw std::runtime_error(
-                "pw(f1,f2,f3) GPU: second or third field not on device.");
+                "pw(f1,f2,f3) GPU: a field not on device.");
         int total   = nx * ny * nz;
         int threads = 256;
         int blocks  = (total + threads - 1) / threads;
@@ -238,8 +251,9 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
                 std::string("pw3 GPU kernel error: ") + cudaGetErrorString(err));
     };
 
-    t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf2, pf3]
-                   (double* rhs, const double* src1, double c) mutable {
+    t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf1, pf2, pf3]
+                   (double* rhs, double c, ScratchPool&) mutable {
+        const double* src1 = pf1->curr.data();
         const double* src2 = pf2->curr.data();
         const double* src3 = pf3->curr.data();
         for (int k = 0; k < nz; ++k)

@@ -23,21 +23,65 @@
 // Usage:  pw(c, PHIX_FN (double c_val) { return ...; })
 #define PHIX_FN [=] __host__ __device__
 
+#include <cstddef>
 #include <functional>
 #include <vector>
 
 namespace PhiX {
 
+class BoundaryCondition;
+
+// ---------------------------------------------------------------------------
+// ScratchPool
+//
+// Recyclable buffer pool used by composite Term launchers (Term*Term,
+// lap(expr,bcs), etc.) to materialise intermediate results without repeated
+// cudaMalloc/cudaFree.  Each Equation owns one pool; Equation::computeRHS
+// resets it before evaluating the RHS.
+//
+// All sizes are in `double`s (not bytes).  Buffers are NOT zeroed by
+// acquire — the caller is responsible for cudaMemset / std::fill.
+// ---------------------------------------------------------------------------
+class ScratchPool {
+public:
+    ScratchPool() = default;
+    ~ScratchPool();
+
+    ScratchPool(const ScratchPool&)            = delete;
+    ScratchPool& operator=(const ScratchPool&) = delete;
+
+    double* acquireDevice(std::size_t size);
+    double* acquireHost  (std::size_t size);
+
+    void reset() { next_dev_ = 0; next_host_ = 0; }
+
+private:
+    std::vector<double*>             dev_bufs_;
+    std::vector<std::size_t>         dev_sizes_;
+    std::size_t                      next_dev_  = 0;
+
+    std::vector<std::vector<double>> host_bufs_;
+    std::size_t                      next_host_ = 0;
+};
+
 // ---------------------------------------------------------------------------
 // TermLauncher — host-side std::function that launches (or runs) one term.
-//   args: (rhs_data, src_data, effective_coeff)
-//   All mesh / ghost-layout info is captured at term-construction time.
+//
+//   args: (rhs_data, effective_coeff, scratch_pool)
+//
+// The launcher captures all source field pointers at construction time
+// (capturing `const ScalarField*` so that pointer-swap tricks like the one
+// used by RK4 still work — d_curr is re-read on every invocation).
+//
+// `pool` provides recyclable scratch buffers for nested expressions; it is
+// reset once per Equation::computeRHS call.  Simple Terms (lap, grad, pw)
+// ignore it.
 // ---------------------------------------------------------------------------
 using TermLauncher = std::function<void(double* /*rhs*/,
-                                        const double* /*src*/,
-                                        double /*coeff*/)>;
+                                        double /*coeff*/,
+                                        ScratchPool& /*pool*/)>;
 
-enum class TermType { LAPLACIAN, GRADIENT, POINTWISE };
+enum class TermType { LAPLACIAN, GRADIENT, POINTWISE, COMPOSITE };
 
 // ---------------------------------------------------------------------------
 // Term — one additive contribution to an RHS expression
@@ -45,7 +89,10 @@ enum class TermType { LAPLACIAN, GRADIENT, POINTWISE };
 struct Term {
     TermType      type  = TermType::LAPLACIAN;
     double        coeff = 1.0;
-    const ScalarField*  field = nullptr;   // source field (non-owning)
+    // Reference field used by computeRHS only for null/device-allocation
+    // sanity checks.  Composite terms (Term*Term, lap(expr,bcs), ...) point
+    // to a representative source field that is guaranteed to be on device.
+    const ScalarField*  field = nullptr;
     int           axis  = 0;         // for GRADIENT: 0=x, 1=y, 2=z
 
     TermLauncher  gpu_launcher;   // host fn that launches GPU kernel
@@ -107,6 +154,44 @@ Term lap(const ScalarField& f, double coeff = 1.0);
 
 // coeff * d(f)/d(x_axis)  — 2nd-order central FD component gradient
 Term grad(const ScalarField& f, int axis, double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// Differential operators on composite expressions (Term / RHSExpr).
+//
+// The expression is materialised into a scratch ScalarField at evaluation
+// time, BCs are applied to its ghost cells, then the standard finite-
+// difference stencil is applied.  Required because expressions do not own
+// ghost cells and the stencil needs them.
+//
+// `bcs` typically matches the BCs used for the field that drives the
+// expression (e.g. the same BCs you would apply to `mu` if the expression
+// is a closed-form rewrite of `mu`).
+//
+// TODO(vector): add VectorRHSExpr overloads of lap/grad/div on expressions
+// when vector solvers need them.
+// ---------------------------------------------------------------------------
+Term lap (const Term&    t,
+          const std::vector<BoundaryCondition*>& bcs,
+          double coeff = 1.0);
+Term lap (const RHSExpr& expr,
+          const std::vector<BoundaryCondition*>& bcs,
+          double coeff = 1.0);
+
+Term grad(const Term&    t,    int axis,
+          const std::vector<BoundaryCondition*>& bcs,
+          double coeff = 1.0);
+Term grad(const RHSExpr& expr, int axis,
+          const std::vector<BoundaryCondition*>& bcs,
+          double coeff = 1.0);
+
+// grad(expr) without axis -> VectorRHSExpr (one component per mesh axis).
+struct VectorRHSExpr;
+VectorRHSExpr grad(const Term&    t,
+                   const std::vector<BoundaryCondition*>& bcs,
+                   double coeff = 1.0);
+VectorRHSExpr grad(const RHSExpr& expr,
+                   const std::vector<BoundaryCondition*>& bcs,
+                   double coeff = 1.0);
 
 // ---------------------------------------------------------------------------
 // pw<Functor> — pointwise user-defined transform
@@ -208,6 +293,15 @@ VectorRHSExpr grad(const ScalarField& f, double coeff = 1.0);
 // div(VectorField)  — returns RHSExpr (scalar);
 //   result = sum_c grad(vf[c], c)
 RHSExpr div(const VectorField& vf, double coeff = 1.0);
+
+// div(VectorRHSExpr, bcs)  — divergence of an expression-valued vector field.
+//   result = sum_c grad(v[c], c, bcs, coeff)
+// `bcs` is applied to each materialised flux component before differentiation.
+// TODO(vector): add a tensor-divergence overload returning VectorRHSExpr when
+// vector solvers need it.
+RHSExpr div(const VectorRHSExpr& v,
+            const std::vector<BoundaryCondition*>& bcs,
+            double coeff = 1.0);
 
 // curl(VectorField)  — returns VectorRHSExpr (3D only, dim must be 3);
 //   curl[0] = dv2/dy - dv1/dz
