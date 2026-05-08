@@ -3,6 +3,7 @@
 #include "equation/Term.h"
 #include "field/ScalarField.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,13 +49,41 @@ public:
     void computeRHSCPU(ScalarField& rhs) const;
 
     // -----------------------------------------------------------------------
+    // Single-step advance methods
+    //
+    // Both methods apply `bcs` to `sourceField` (refreshing ghost cells)
+    // before evaluating the RHS.  If `sourceField` is nullptr, BCs are
+    // applied to `unknown` itself (backward-compatible default).
+    //
+    // advanceSteady   — STEADY assignment:  unknown  = RHS
+    //                   Does NOT call advanceTimeLevelGPU; does NOT count time.
+    //
+    // advanceTransient — TRANSIENT Euler:   unknown += dt * RHS
+    //                   Calls advanceTimeLevelGPU (d_prev ← d_curr) after update.
+    //                   Increments step and time.
+    // -----------------------------------------------------------------------
+    void advanceSteady(const std::vector<BoundaryCondition*>& bcs,
+                       ScalarField* sourceField = nullptr);
+
+    void advanceTransient(const std::vector<BoundaryCondition*>& bcs,
+                          double dt,
+                          ScalarField* sourceField = nullptr);
+
+    // Step counter and simulation time (incremented only by advanceTransient).
+    int    step = 0;
+    double time = 0.0;
+
+    // -----------------------------------------------------------------------
     // Convenience: return true if RHS has been set
     // -----------------------------------------------------------------------
     bool hasRHS() const { return !rhs_expr_.terms.empty(); }
 
 private:
     RHSExpr               rhs_expr_;
-    mutable ScratchPool   scratch_pool_;   // reused across computeRHS calls
+    mutable ScratchPool   scratch_pool_;
+
+    // Scratch field for advanceTransient (lazily allocated on first call).
+    mutable std::unique_ptr<ScalarField> rhs_scratch_;
 };
 
 } // namespace PhiX

@@ -209,6 +209,149 @@ inline Term termTimesTerm(LhsExpr lhs, RhsExpr rhs,
 
 } // namespace detail
 
+// ===========================================================================
+// pw on Term expressions — materialise then apply user functor pointwise.
+// Definitions are here (not TermPW.inl) because they need detail::materialise*.
+// ===========================================================================
+
+// pw(Term, Functor) — 1-arg
+template<typename Functor>
+inline Term pw(const Term& t, Functor func, double coeff) {
+    const ScalarField* layout = detail::repField(t);
+    int nx = layout->mesh.n[0], ny = layout->mesh.n[1], nz = layout->mesh.n[2];
+    int sx = layout->storedDims[0], sy = layout->storedDims[1];
+    int g  = layout->ghost;
+    std::size_t storedSize = layout->storedSize;
+
+    Term out;
+    out.type  = TermType::COMPOSITE;
+    out.coeff = coeff;
+    out.field = layout;
+
+    out.gpu_launcher = [t, func, nx, ny, nz, sx, sy, g, storedSize]
+                       (double* d_rhs, double c, ScratchPool& pool) {
+        double* d_scratch = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t, d_scratch, storedSize, pool);
+        int total = nx * ny * nz;
+        kernel_pw_accumulate<Functor><<<(total + 255) / 256, 256>>>(
+            d_rhs, d_scratch, func, c, nx, ny, nz, sx, sy, g);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("pw(Term) GPU: ") + cudaGetErrorString(err));
+    };
+
+    out.cpu_kernel = [t, func, nx, ny, nz, sx, sy, g, storedSize]
+                     (double* rhs, double c, ScratchPool& pool) {
+        double* h_scratch = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t, h_scratch, storedSize, pool);
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int idx = (i + g) + sx * ((j + g) + sy * (k + g));
+            rhs[idx] += c * func(h_scratch[idx]);
+        }
+    };
+
+    return out;
+}
+
+// pw(Term, Term, Functor) — 2-arg
+template<typename Functor>
+inline Term pw(const Term& t1, const Term& t2, Functor func, double coeff) {
+    const ScalarField* layout = detail::repField(t1);
+    int nx = layout->mesh.n[0], ny = layout->mesh.n[1], nz = layout->mesh.n[2];
+    int sx = layout->storedDims[0], sy = layout->storedDims[1];
+    int g  = layout->ghost;
+    std::size_t storedSize = layout->storedSize;
+
+    Term out;
+    out.type  = TermType::COMPOSITE;
+    out.coeff = coeff;
+    out.field = layout;
+
+    out.gpu_launcher = [t1, t2, func, nx, ny, nz, sx, sy, g, storedSize]
+                       (double* d_rhs, double c, ScratchPool& pool) {
+        double* s1 = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t1, s1, storedSize, pool);
+        double* s2 = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t2, s2, storedSize, pool);
+        int total = nx * ny * nz;
+        kernel_pw2_accumulate<Functor><<<(total + 255) / 256, 256>>>(
+            d_rhs, s1, s2, func, c, nx, ny, nz, sx, sy, g);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("pw(Term,Term) GPU: ") + cudaGetErrorString(err));
+    };
+
+    out.cpu_kernel = [t1, t2, func, nx, ny, nz, sx, sy, g, storedSize]
+                     (double* rhs, double c, ScratchPool& pool) {
+        double* h1 = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t1, h1, storedSize, pool);
+        double* h2 = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t2, h2, storedSize, pool);
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int idx = (i + g) + sx * ((j + g) + sy * (k + g));
+            rhs[idx] += c * func(h1[idx], h2[idx]);
+        }
+    };
+
+    return out;
+}
+
+// pw(Term, Term, Term, Functor) — 3-arg
+template<typename Functor>
+inline Term pw(const Term& t1, const Term& t2, const Term& t3, Functor func, double coeff) {
+    const ScalarField* layout = detail::repField(t1);
+    int nx = layout->mesh.n[0], ny = layout->mesh.n[1], nz = layout->mesh.n[2];
+    int sx = layout->storedDims[0], sy = layout->storedDims[1];
+    int g  = layout->ghost;
+    std::size_t storedSize = layout->storedSize;
+
+    Term out;
+    out.type  = TermType::COMPOSITE;
+    out.coeff = coeff;
+    out.field = layout;
+
+    out.gpu_launcher = [t1, t2, t3, func, nx, ny, nz, sx, sy, g, storedSize]
+                       (double* d_rhs, double c, ScratchPool& pool) {
+        double* s1 = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t1, s1, storedSize, pool);
+        double* s2 = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t2, s2, storedSize, pool);
+        double* s3 = pool.acquireDevice(storedSize);
+        detail::materialiseGPU(t3, s3, storedSize, pool);
+        int total = nx * ny * nz;
+        kernel_pw3_accumulate<Functor><<<(total + 255) / 256, 256>>>(
+            d_rhs, s1, s2, s3, func, c, nx, ny, nz, sx, sy, g);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("pw(Term,Term,Term) GPU: ") + cudaGetErrorString(err));
+    };
+
+    out.cpu_kernel = [t1, t2, t3, func, nx, ny, nz, sx, sy, g, storedSize]
+                     (double* rhs, double c, ScratchPool& pool) {
+        double* h1 = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t1, h1, storedSize, pool);
+        double* h2 = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t2, h2, storedSize, pool);
+        double* h3 = pool.acquireHost(storedSize);
+        detail::materialiseCPU(t3, h3, storedSize, pool);
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int idx = (i + g) + sx * ((j + g) + sy * (k + g));
+            rhs[idx] += c * func(h1[idx], h2[idx], h3[idx]);
+        }
+    };
+
+    return out;
+}
+
 // --- Term × ScalarField / ScalarField × Term --------------------------------
 inline Term operator*(const Term& t, const ScalarField& f) {
     const ScalarField* layout = detail::repField(t);
@@ -286,6 +429,93 @@ inline VectorRHSExpr operator*(const RHSExpr& e, const VectorRHSExpr& v) {
 }
 inline VectorRHSExpr operator*(const VectorRHSExpr& v, const RHSExpr& e) {
     return e * v;
+}
+
+// ===========================================================================
+// Named multiplication functions — Hadamard (element-wise) product.
+//
+// Equivalent to the operator* overloads above, but as named functions so
+// that other multiplication variants (dot, matmul, outer product, ...) can
+// be added later without creating operator ambiguity.
+//
+//   mul(a, b, coeff=1.0)  ≡  coeff * (a ⊙ b)   pointwise
+// ===========================================================================
+
+inline Term mul(const ScalarField& f1, const ScalarField& f2, double coeff) {
+    return pw(f1, f2,
+              [] __host__ __device__ (double a, double b) { return a * b; },
+              coeff);
+}
+
+inline Term mul(const Term& t, const ScalarField& f, double coeff) {
+    const ScalarField* layout = detail::repField(t);
+    return detail::termTimesField<Term>(t, f, *layout, coeff);
+}
+
+inline Term mul(const ScalarField& f, const Term& t, double coeff) {
+    return mul(t, f, coeff);
+}
+
+inline Term mul(const Term& t1, const Term& t2, double coeff) {
+    const ScalarField* layout = detail::repField(t1);
+    return detail::termTimesTerm<Term, Term>(t1, t2, *layout, coeff);
+}
+
+inline Term mul(const RHSExpr& e, const ScalarField& f, double coeff) {
+    const ScalarField* layout = detail::repField(e);
+    return detail::termTimesField<RHSExpr>(e, f, *layout, coeff);
+}
+
+inline Term mul(const ScalarField& f, const RHSExpr& e, double coeff) {
+    return mul(e, f, coeff);
+}
+
+inline Term mul(const RHSExpr& e1, const RHSExpr& e2, double coeff) {
+    const ScalarField* layout = detail::repField(e1);
+    return detail::termTimesTerm<RHSExpr, RHSExpr>(e1, e2, *layout, coeff);
+}
+
+inline Term mul(const Term& t, const RHSExpr& e, double coeff) {
+    const ScalarField* layout = detail::repField(t);
+    return detail::termTimesTerm<Term, RHSExpr>(t, e, *layout, coeff);
+}
+
+inline Term mul(const RHSExpr& e, const Term& t, double coeff) {
+    const ScalarField* layout = detail::repField(e);
+    return detail::termTimesTerm<RHSExpr, Term>(e, t, *layout, coeff);
+}
+
+// ===========================================================================
+// Dot product  —  A · B = Σ_c A[c] * B[c]  →  RHSExpr (scalar)
+// ===========================================================================
+
+// VectorField · VectorField
+inline RHSExpr dot(const VectorField& a, const VectorField& b, double coeff) {
+    RHSExpr result;
+    for (int c = 0; c < a.nComponents(); ++c)
+        result += mul(a[c], b[c], coeff);
+    return result;
+}
+
+// VectorRHSExpr · VectorField
+inline RHSExpr dot(const VectorRHSExpr& a, const VectorField& b, double coeff) {
+    RHSExpr result;
+    for (int c = 0; c < a.nComponents(); ++c)
+        result += mul(a[c], b[c], coeff);   // mul(RHSExpr, ScalarField)
+    return result;
+}
+
+// VectorField · VectorRHSExpr
+inline RHSExpr dot(const VectorField& a, const VectorRHSExpr& b, double coeff) {
+    return dot(b, a, coeff);
+}
+
+// VectorRHSExpr · VectorRHSExpr
+inline RHSExpr dot(const VectorRHSExpr& a, const VectorRHSExpr& b, double coeff) {
+    RHSExpr result;
+    for (int c = 0; c < a.nComponents(); ++c)
+        result += mul(a[c], b[c], coeff);   // mul(RHSExpr, RHSExpr)
+    return result;
 }
 
 } // namespace PhiX

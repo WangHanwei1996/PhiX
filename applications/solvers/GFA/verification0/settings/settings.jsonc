@@ -1,0 +1,73 @@
+{
+    // =========================================================================
+    // GFA verification0 — η-only Allen-Cahn solver
+    // Verification 4: reproduce structural relaxation morphology (Fig. 1 趋势)
+    //
+    // 论文参数（Wang & Napolitano, §8.2）
+    //   f_c(η=0) - f_c(η=1) = 4 kJ/mol
+    //   → Δf^SR = -(4000 J/mol) / Vm_liq ≈ -3.78e8 J/m³  (玻璃态更稳定)
+    //
+    // 三种 case 的参数差异（仅修改 beta / w_eta，其余不变）：
+    //   case 1 (本文件, 默认) : beta=4e-11 J/m,  w_eta=4e8 J/m³
+    //   case 2               : beta=4e-12 J/m,  w_eta=4e7 J/m³  (降一个数量级)
+    //   case 3               : beta=4e-12 J/m,  w_eta=4e6 J/m³  (近零能垒)
+    //
+    // 界面参数
+    //   case 1: δ = √(β/2w_η) = √(4e-11/8e8) ≈ 7.1e-10 m
+    //   case 2: δ ≈ 7.1e-10 m  (界面宽度相同，但能垒更低)
+    //   case 3: δ ≈ 2.2e-9 m
+    // =========================================================================
+
+    "mesh": {
+        // 2D 方形网格，dx ≈ δ/5 确保界面被充分分辨
+        // case 1: dx = 1.4e-10 m,  128×128 → 域宽 ≈ 18 nm ≈ 25δ
+        "nx": 128,
+        "ny": 128,
+        "dx": 1.4e-10,   // [m]
+        "dy": 1.4e-10,   // [m]
+        "x0": 0.0,
+        "y0": 0.0
+    },
+
+    "initialize": {
+        // "initial_field" : 从头开始，读取 settings/initial_field/eta.field
+        // "<number>"      : 从指定步续算，读取 output/eta_<step>.field
+        "start_from": "initial_field",
+
+        // 显式 Euler 稳定性：dt ≤ dx² / (2 L_η β)
+        //   case 1: dt ≤ (1.4e-10)² / (2·0.1·4e-11) ≈ 2.45e-9 s
+        "dt"    : 1.0e-9,
+
+        "nSteps": 50000
+    },
+
+    "boundary_conditions": {
+        // 周期边界——论文 Fig. 1 使用周期边界
+        "x_min": "Periodic",
+        "x_max": "Periodic",
+        "y_min": "Periodic",
+        "y_max": "Periodic"
+    },
+
+    "constants": {
+        // --- 驱动力（直接给出 J/m³，负号代表玻璃态更稳定）---
+        // Δf^SR = -(4 kJ/mol) / (1.058e-5 m³/mol) ≈ -3.78e8 J/m³
+        "delta_f_SR": -3.78e8,    // [J/m³]
+
+        // --- case 1 参数 ---
+        "beta"      : 4.0e-11,        // η 梯度能系数 [J/m]
+        "w_eta"     : 4.0e8,          // η 双势阱能垒 [J/m³]
+        "L_eta"     : 0.1,            // Allen-Cahn 迁移率 [m³/(J·s)]
+
+        // --- 随机噪声 ---
+        "noise_mean": 0.0,            // 每步高斯噪声均值（通常为 0）
+        "noise_std" : 1.0e-3,         // 每步高斯噪声标准差（相对于 [0,1]）
+        "noise_seed": 12345           // curand 初始种子
+    },
+
+    "output": {
+        "print_interval": 1000,   // 每 1000 步打印进度
+        "write_interval": 2500,   // 每 2500 步写出场文件
+        "format"        : "ALL"   // "BINARY" | "DAT" | "VTK" | "ALL"
+    }
+}

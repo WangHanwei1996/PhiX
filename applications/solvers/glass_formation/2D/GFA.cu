@@ -1,12 +1,44 @@
 ﻿/***********************************************************************\
- *  Glass Formation Ability (GFA) Solver (2D) - composite-Term DSL
+ *
+ *  Glass Formation Ability (GFA) Solver (2D)
+ *
+ *  Author : Wang Hanwei
+ *  Email  : wanghanweibnds2015@gmail.com
+ *
+ *  Description
+ *  -----------
+ *  Coupled Cahn-Hilliard (c) and Allen-Cahn (phi, eta) equations for
+ *  simulating glass formation in Fe-B binary alloys.
+ *
+ *  Variables:
+ *    phi  -- crystalline order parameter  (0: liquid/amorphous, 1: solid)
+ *    eta  -- amorphous order parameter    (0: liquid,           1: amorphous)
+ *    c    -- composition (mole fraction of B)
+ *    mu   -- chemical potential  mu = df/dc
+ *
+ *  Evolution equations:
+ *    dphi/dt = -M_phi * (df/dphi - eps^2 * lap(phi))
+ *    deta/dt = -M_eta * (df/deta - beta^2 * lap(eta))
+ *    dc/dt   = div( M_c * c*(1-c) * grad(mu) )
+ *
+ *  Free energy density:
+ *    f = [1-h(phi)]*[f_L(c,T) + h(eta)*Df_AmL(T)]
+ *      + h(phi)*f_S(T)
+ *      + w_phi*g(phi) + w_eta*g(eta) + w_ex*phi^2*eta^2
+ *
+ *  CALPHAD thermodynamics for the Fe-B binary system.
+ *
+ *  Note: Compared to GFA_old, auxiliary gradient/Laplacian fields are
+ *  eliminated; grad(D)·grad(mu) and D·lap(mu) are evaluated inline via
+ *  the composite-Term DSL, reducing the number of solver steps from 11
+ *  to 6.
+ *
  \***********************************************************************/
 
 #include "mesh/Mesh.h"
 #include "field/ScalarField.h"
 #include "boundary/BCFactory.h"
 #include "equation/Equation.h"
-#include "solver/Solver.h"
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
@@ -89,6 +121,7 @@ int main(int argc, char* argv[])
     using namespace PhiX;
     IO::ConfigFile cfg = IO::ConfigFile::fromArgs(argc, argv);
 
+    // === 1. Mesh =============================================================
     const int    nx = cfg["mesh"]["nx"];
     const double dx = cfg["mesh"]["dx"];
     const double x0 = cfg["mesh"]["x0"];
@@ -98,9 +131,11 @@ int main(int argc, char* argv[])
     Mesh mesh = Mesh::makeUniform2D(CoordSys::CARTESIAN, nx, dx, x0, ny, dy, y0);
     mesh.print();
 
+    // === 2. Time parameters ==================================================
     const double dt     = cfg["initialize"]["dt"];
     const int    nSteps = cfg["initialize"]["nSteps"];
 
+    // === 3. Physical constants ===============================================
     const double M_eta   = cfg["constants"]["M_eta"];
     const double eps_sq  = cfg["constants"]["eps_sq"];
     const double beta_sq = cfg["constants"]["beta_sq"];
@@ -120,6 +155,7 @@ int main(int argc, char* argv[])
     const double fS_val    = compute_fS(T, V_m_S);
     const double dfAmL_val = compute_dfAmL(T, T_g, alpha, V_m_L);
 
+    // === 4. Fields ===========================================================
     ScalarField c   (mesh, "c",   1);
     ScalarField phi (mesh, "phi", 1);
     ScalarField eta (mesh, "eta", 1);
@@ -137,9 +173,14 @@ int main(int argc, char* argv[])
     auto allocUp = [](ScalarField& f){ f.allocDevice(); f.uploadAllToDevice(); };
     allocUp(c); allocUp(phi); allocUp(eta); allocUp(mu); allocUp(D);
 
+    // === 5. Boundary conditions ==============================================
     auto  bcSet = buildBCs(cfg["boundary_conditions"]);
     auto& bcs   = bcSet.ptrs;
 
+    // === 6. Equations ========================================================
+
+    // ------ 6a. STEADY: mu = df/dc -------------------------------------------
+    //   df/dc = [1 - h(phi)] * (1/V_m_L) * dG^L/dc
     Equation eq_mu(mu, "mu");
     eq_mu.setRHS(
         pw(c, phi, PHIX_FN (double c_val, double phi_val) {
@@ -147,6 +188,8 @@ int main(int argc, char* argv[])
         })
     );
 
+    // ------ 6b. STEADY: D = M_c(phi,eta) * c*(1-c) ---------------------------
+    //   M_c = [(1-h(phi))((1-h(eta))D_L + h(eta)D_Am) + h(phi)D_S] / (RT)
     Equation eqD(D, "D");
     eqD.setRHS(
         pw(c, phi, eta, PHIX_FN (double cv, double pv, double ev) {
@@ -157,6 +200,9 @@ int main(int argc, char* argv[])
         })
     );
 
+    // ------ 6c. TRANSIENT: c equation (Cahn-Hilliard) ------------------------
+    //   dc/dt = div(D * grad(mu)) = D * lap(mu) + grad(D) . grad(mu)
+    //   (grad(D) and lap(mu) evaluated inline via composite-Term DSL)
     Equation eqC(c, "CH_c");
     eqC.setRHS(
           D * lap(mu)
@@ -164,6 +210,11 @@ int main(int argc, char* argv[])
         + grad(D, 1) * grad(mu, 1)
     );
 
+    // ------ 6d. TRANSIENT: phi equation (Allen-Cahn) -------------------------
+    //   dphi/dt = -M_phi * df/dphi  +  M_phi * eps^2 * lap(phi)
+    //   M_phi   = 22.1 * exp(-140e3 / (R*T))   (pre-computed as M_phi_val)
+    //   df/dphi = h'(phi)*[f_S - f_L(c,T) - h(eta)*Df_AmL]
+    //           + w_phi g'(phi)  + 2 w_ex phi eta^2
     Equation eqPhi(phi, "AC_phi");
     eqPhi.setRHS(
         pw(phi, eta, c, PHIX_FN (double pv, double ev, double cv) {
@@ -177,6 +228,9 @@ int main(int argc, char* argv[])
         + M_phi_val * eps_sq * lap(phi)
     );
 
+    // ------ 6e. TRANSIENT: eta equation (Allen-Cahn) -------------------------
+    //   deta/dt = -M_eta * df/deta  +  M_eta * beta^2 * lap(eta)
+    //   df/deta = [1-h(phi)] h'(eta) Df_AmL  + w_eta g'(eta)  + 2 w_ex phi^2 eta
     Equation eqEta(eta, "AC_eta");
     eqEta.setRHS(
         pw(phi, eta, PHIX_FN (double pv, double ev) {
@@ -189,26 +243,24 @@ int main(int argc, char* argv[])
         + M_eta * beta_sq * lap(eta)
     );
 
-    Solver solver(
-        {
-            { &c,    bcs, &eq_mu, EquationType::STEADY    },  // 1: compute mu
-            { &mu,   bcs, &eqD,   EquationType::STEADY    },  // 2: refresh mu halos, compute D
-            { &D,    bcs, &eqD,   EquationType::STEADY    },  // 3: refresh D halos (recompute D)
-            { &c,    bcs, &eqC,   EquationType::TRANSIENT },  // 4: update c
-            { &phi,  bcs, &eqPhi, EquationType::TRANSIENT },  // 5: update phi
-            { &eta,  bcs, &eqEta, EquationType::TRANSIENT }   // 6: update eta
-        },
-        dt, TimeScheme::EULER);
+    // === 7. Time loop ========================================================
+    //  Step order (per time step):
+    //   1.  BC(c)   -> mu  = df/dc                        [STEADY]
+    //   2.  BC(mu)  -> D   = M_c(phi,eta)*c*(1-c)        [STEADY]
+    //   3.  BC(D)   -> D   (refresh D halos)             [STEADY]
+    //   4.  BC(c)   -> c  += dt * div(D grad(mu))        [TRANSIENT]
+    //   5.  BC(phi) -> phi+= dt * RHS_phi                [TRANSIENT]
+    //   6.  BC(eta) -> eta+= dt * RHS_eta                [TRANSIENT]
+    eqC.step = start_step;
+    eqC.time = start_step * dt;
 
-    solver.step = start_step;
-    solver.time = start_step * dt;
-
+    // === 8. Output & time loop ===============================================
     IO::OutputWriter writer(cfg["output"]);
 
     if (start_step == 0) {
-        writer.writeFields(c,   0, solver.time);
-        writer.writeFields(phi, 0, solver.time);
-        writer.writeFields(eta, 0, solver.time);
+        writer.writeFields(c,   0, eqC.time);
+        writer.writeFields(phi, 0, eqC.time);
+        writer.writeFields(eta, 0, eqC.time);
         std::cout << "Starting GFA simulation (" << nSteps << " steps, dt=" << dt
                   << ", T=" << T << " K)\n";
     } else {
@@ -218,14 +270,20 @@ int main(int argc, char* argv[])
     }
 
     writer.resetTimer();
-    for (int step = start_step; step < nSteps; ++step) {
-        solver.advance();
-        if (writer.shouldPrint(solver.step))
-            writer.printProgress(solver.step, solver.time);
-        if (writer.shouldWrite(solver.step)) {
-            writer.writeFields(c,   solver.step, solver.time);
-            writer.writeFields(phi, solver.step, solver.time);
-            writer.writeFields(eta, solver.step, solver.time);
+    for (int s = start_step; s < nSteps; ++s) {
+        eq_mu.advanceSteady(bcs, &c);     // 1: BC(c)   -> compute mu
+        eqD.advanceSteady(bcs, &mu);      // 2: BC(mu)  -> compute D
+        eqD.advanceSteady(bcs, &D);       // 3: BC(D)   -> refresh D halos, recompute D
+        eqC.advanceTransient(bcs, dt, &c);       // 4: BC(c)   -> update c
+        eqPhi.advanceTransient(bcs, dt, &phi);   // 5: BC(phi) -> update phi
+        eqEta.advanceTransient(bcs, dt, &eta);   // 6: BC(eta) -> update eta
+
+        if (writer.shouldPrint(eqC.step))
+            writer.printProgress(eqC.step, eqC.time);
+        if (writer.shouldWrite(eqC.step)) {
+            writer.writeFields(c,   eqC.step, eqC.time);
+            writer.writeFields(phi, eqC.step, eqC.time);
+            writer.writeFields(eta, eqC.step, eqC.time);
         }
     }
     std::cout << "Done.\n";

@@ -239,6 +239,266 @@ Term grad(const ScalarField& f, int axis, double coeff) {
     return t;
 }
 
+// ---------------------------------------------------------------------------
+// Isotropic 9-point gradient (Patra-Karttunen, 2D only):
+//   df/dx[i,j] ≈ [4(f[i+1,j]-f[i-1,j])
+//                + (f[i+1,j+1]-f[i-1,j+1])
+//                + (f[i+1,j-1]-f[i-1,j-1])] / (12*dx)
+//   df/dy[i,j] : symmetric in y
+// Reduces grid anisotropy of the standard 3-point central FD gradient
+// when later combined with a divergence (so div(grad) becomes a 9-point
+// isotropic Laplacian).  For 1D / 3D meshes falls back to standard
+// 3-point central FD on `axis`.
+// ---------------------------------------------------------------------------
+__global__ void kernel_iso_grad_accumulate(
+        double*       rhs,
+        const double* src,
+        double        coeff,
+        int nx, int ny, int nz,
+        int sx, int sy,
+        int ghost, int axis,
+        double inv_12d)   // 1 / (12 * d[axis])
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nx * ny * nz) return;
+
+    int i = tid % nx;
+    int j = (tid / nx) % ny;
+    int k = tid / (nx * ny);
+
+    int is = i + ghost;
+    int js = j + ghost;
+    int ks = k + ghost;
+    int c  = is + sx * (js + sy * ks);
+
+    double val;
+    if (axis == 0) {
+        // 9-point isotropic d/dx (uses j-1, j, j+1 rows)
+        int xp_jm = (is+1) + sx*((js-1) + sy*ks);
+        int xp_j  = (is+1) + sx*( js    + sy*ks);
+        int xp_jp = (is+1) + sx*((js+1) + sy*ks);
+        int xm_jm = (is-1) + sx*((js-1) + sy*ks);
+        int xm_j  = (is-1) + sx*( js    + sy*ks);
+        int xm_jp = (is-1) + sx*((js+1) + sy*ks);
+        val = (4.0*(src[xp_j ] - src[xm_j ])
+                  + (src[xp_jp] - src[xm_jp])
+                  + (src[xp_jm] - src[xm_jm])) * inv_12d;
+    } else {
+        // axis == 1: 9-point isotropic d/dy
+        int xm_yp = (is-1) + sx*((js+1) + sy*ks);
+        int x_yp  =  is    + sx*((js+1) + sy*ks);
+        int xp_yp = (is+1) + sx*((js+1) + sy*ks);
+        int xm_ym = (is-1) + sx*((js-1) + sy*ks);
+        int x_ym  =  is    + sx*((js-1) + sy*ks);
+        int xp_ym = (is+1) + sx*((js-1) + sy*ks);
+        val = (4.0*(src[x_yp ] - src[x_ym ])
+                  + (src[xp_yp] - src[xp_ym])
+                  + (src[xm_yp] - src[xm_ym])) * inv_12d;
+    }
+
+    rhs[c] += coeff * val;
+}
+
+// 9-point isotropic gradient (2D only). For 1D meshes the second cross-row
+// is unavailable, so we silently fall back to the standard 3-point central
+// FD (kernel_grad_accumulate). For 3D the 9-point isotropic stencil is not
+// implemented, also fall back.
+Term iso_grad(const ScalarField& f, int axis, double coeff) {
+    if (axis < 0 || axis >= f.mesh.dim)
+        throw std::invalid_argument("iso_grad: axis out of range for this mesh dimension");
+
+    // Fall back to 3-point central FD when isotropic 9-point stencil is
+    // not applicable (1D or 3D meshes, or if we need axis == 2).
+    if (f.mesh.dim != 2 || axis > 1)
+        return grad(f, axis, coeff);
+
+    Term t;
+    t.type  = TermType::GRADIENT;
+    t.field = &f;
+    t.coeff = coeff;
+    t.axis  = axis;
+
+    int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
+    int    sx = f.storedDims[0], sy = f.storedDims[1];
+    int    g  = f.ghost;
+    double inv_12d = 1.0 / (12.0 * f.mesh.d[axis]);
+
+    const ScalarField* pf = &f;
+
+    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, axis, inv_12d]
+                     (double* d_rhs, double c, ScratchPool&) {
+        const double* d_src = pf->d_curr;
+        if (!d_src)
+            throw std::runtime_error("iso_grad GPU: source field not on device");
+        int total = nx * ny * nz;
+        kernel_iso_grad_accumulate<<<(total + 255) / 256, 256>>>(
+            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_12d);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("iso_grad GPU kernel error: ") + cudaGetErrorString(err));
+    };
+
+    // CPU fallback (rarely used but kept for parity with grad)
+    t.cpu_kernel = [pf, sx, sy, g, axis, inv_12d, nx, ny, nz]
+                   (double* rhs, double c, ScratchPool&) {
+        const double* src = pf->curr.data();
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int is = i+g, js = j+g, ks = k+g;
+            int ctr = is + sx*(js + sy*ks);
+            double val;
+            if (axis == 0) {
+                val = (4.0*(src[(is+1)+sx*( js   +sy*ks)] - src[(is-1)+sx*( js   +sy*ks)])
+                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js+1)+sy*ks)])
+                          + (src[(is+1)+sx*((js-1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
+                      * inv_12d;
+            } else {
+                val = (4.0*(src[ is   +sx*((js+1)+sy*ks)] - src[ is   +sx*((js-1)+sy*ks)])
+                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is+1)+sx*((js-1)+sy*ks)])
+                          + (src[(is-1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
+                      * inv_12d;
+            }
+            rhs[ctr] += c * val;
+        }
+    };
+
+    return t;
+}
+
+// ===========================================================================
+// kernel_grad_dot_accumulate  --  rhs[idx] += coeff * (∇f · ∇g)
+//
+// Computes the pointwise dot product of the gradients of two scalar fields
+// using 2nd-order central FD on all active axes:
+//   result = Σ_a  (df/dx_a) * (dg/dx_a)
+// Both fields must share the same mesh, storedDims, and ghost width.
+// ===========================================================================
+__global__ void kernel_grad_dot_accumulate(
+        double*       rhs,
+        const double* src_f,
+        const double* src_g,
+        double        coeff,
+        int nx, int ny, int nz,
+        int sx, int sy,
+        int ghost, int dim,
+        double inv_2dx, double inv_2dy, double inv_2dz)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nx * ny * nz) return;
+
+    int i = tid % nx;
+    int j = (tid / nx) % ny;
+    int k = tid / (nx * ny);
+
+    int is = i + ghost;
+    int js = j + ghost;
+    int ks = k + ghost;
+    int c  = is + sx * (js + sy * ks);
+
+    double val = 0.0;
+
+    // x-axis
+    {
+        int fwd = (is+1) + sx*(js + sy*ks);
+        int bwd = (is-1) + sx*(js + sy*ks);
+        val += (src_f[fwd] - src_f[bwd]) * inv_2dx
+             * (src_g[fwd] - src_g[bwd]) * inv_2dx;
+    }
+    if (dim >= 2) {
+        int fwd = is + sx*((js+1) + sy*ks);
+        int bwd = is + sx*((js-1) + sy*ks);
+        val += (src_f[fwd] - src_f[bwd]) * inv_2dy
+             * (src_g[fwd] - src_g[bwd]) * inv_2dy;
+    }
+    if (dim >= 3) {
+        int fwd = is + sx*(js + sy*(ks+1));
+        int bwd = is + sx*(js + sy*(ks-1));
+        val += (src_f[fwd] - src_f[bwd]) * inv_2dz
+             * (src_g[fwd] - src_g[bwd]) * inv_2dz;
+    }
+
+    rhs[c] += coeff * val;
+}
+
+// grad_dot(f, g, coeff) — ∇f · ∇g, sum over all active axes.
+Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff) {
+    if (f.mesh.n[0] != g.mesh.n[0] ||
+        f.mesh.n[1] != g.mesh.n[1] ||
+        f.mesh.n[2] != g.mesh.n[2] ||
+        f.ghost != g.ghost)
+        throw std::invalid_argument(
+            "grad_dot: fields must share the same mesh dimensions and ghost width");
+
+    Term t;
+    t.type  = TermType::COMPOSITE;
+    t.field = &f;
+    t.coeff = coeff;
+
+    int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
+    int    sx = f.storedDims[0], sy = f.storedDims[1];
+    int    gh = f.ghost;
+    int    dim = f.mesh.dim;
+    double inv_2dx = 0.5 / f.mesh.d[0];
+    double inv_2dy = (dim >= 2) ? 0.5 / f.mesh.d[1] : 0.0;
+    double inv_2dz = (dim >= 3) ? 0.5 / f.mesh.d[2] : 0.0;
+
+    const ScalarField* pf = &f;
+    const ScalarField* pg = &g;
+
+    t.gpu_launcher = [pf, pg, nx, ny, nz, sx, sy, gh, dim, inv_2dx, inv_2dy, inv_2dz]
+                     (double* d_rhs, double c, ScratchPool&) {
+        const double* d_f = pf->d_curr;
+        const double* d_g = pg->d_curr;
+        if (!d_f || !d_g)
+            throw std::runtime_error(
+                "grad_dot GPU: a field not on device");
+        int total = nx * ny * nz;
+        kernel_grad_dot_accumulate<<<(total + 255) / 256, 256>>>(
+            d_rhs, d_f, d_g, c, nx, ny, nz, sx, sy,
+            gh, dim, inv_2dx, inv_2dy, inv_2dz);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("grad_dot GPU kernel error: ") + cudaGetErrorString(err));
+    };
+
+    t.cpu_kernel = [pf, pg, nx, ny, nz, sx, sy, gh, dim, inv_2dx, inv_2dy, inv_2dz]
+                   (double* rhs, double c, ScratchPool&) {
+        const double* f_data = pf->curr.data();
+        const double* g_data = pg->curr.data();
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int is = i+gh, js = j+gh, ks = k+gh;
+            int ctr = is + sx*(js + sy*ks);
+            double val = 0.0;
+            {
+                int fwd = (is+1) + sx*(js + sy*ks);
+                int bwd = (is-1) + sx*(js + sy*ks);
+                val += (f_data[fwd] - f_data[bwd]) * inv_2dx
+                     * (g_data[fwd] - g_data[bwd]) * inv_2dx;
+            }
+            if (dim >= 2) {
+                int fwd = is + sx*((js+1) + sy*ks);
+                int bwd = is + sx*((js-1) + sy*ks);
+                val += (f_data[fwd] - f_data[bwd]) * inv_2dy
+                     * (g_data[fwd] - g_data[bwd]) * inv_2dy;
+            }
+            if (dim >= 3) {
+                int fwd = is + sx*(js + sy*(ks+1));
+                int bwd = is + sx*(js + sy*(ks-1));
+                val += (f_data[fwd] - f_data[bwd]) * inv_2dz
+                     * (g_data[fwd] - g_data[bwd]) * inv_2dz;
+            }
+            rhs[ctr] += c * val;
+        }
+    };
+
+    return t;
+}
+
 // ===========================================================================
 // Equation
 // ===========================================================================
@@ -740,6 +1000,140 @@ RHSExpr div(const VectorRHSExpr& v,
     for (int ax = 0; ax < n; ++ax)
         expr += grad(v[ax], ax, bcs, coeff);
     return expr;
+}
+
+// --- iso_grad(Term, axis, bcs) / iso_grad(RHSExpr, axis, bcs) ---------------
+//
+// Like gradOnExpr but uses the 9-point isotropic stencil (kernel_iso_grad_accumulate).
+// Falls back to gradOnExpr for non-2D meshes or axis >= 2.
+
+template<typename SrcExpr>
+static Term isoGradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
+                           const std::vector<BoundaryCondition*>& bcs,
+                           double coeff)
+{
+    if (axis < 0 || axis >= layout.mesh.dim)
+        throw std::invalid_argument("iso_grad(expr): axis out of range");
+
+    // Fallback to standard grad for 1D/3D or axis >= 2
+    if (layout.mesh.dim != 2 || axis > 1)
+        return gradOnExpr(std::move(src_expr), layout, axis, bcs, coeff);
+
+    int    nx = layout.mesh.n[0], ny = layout.mesh.n[1], nz = layout.mesh.n[2];
+    int    sx = layout.storedDims[0], sy = layout.storedDims[1];
+    int    g  = layout.ghost;
+    double inv_12d = 1.0 / (12.0 * layout.mesh.d[axis]);
+
+    auto gpu_op = [nx, ny, nz, sx, sy, g, axis, inv_12d]
+                  (double* d_rhs, const double* d_src, double c) {
+        int total = nx * ny * nz;
+        kernel_iso_grad_accumulate<<<(total + 255) / 256, 256>>>(
+            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_12d);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("iso_grad(expr) GPU error: ") + cudaGetErrorString(err));
+    };
+
+    auto cpu_op = [nx, ny, nz, sx, sy, g, axis, inv_12d]
+                  (double* rhs, const double* src, double c) {
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            int is = i+g, js = j+g, ks = k+g;
+            int ctr = is + sx*(js + sy*ks);
+            double val;
+            if (axis == 0) {
+                val = (4.0*(src[(is+1)+sx*( js   +sy*ks)] - src[(is-1)+sx*( js   +sy*ks)])
+                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js+1)+sy*ks)])
+                          + (src[(is+1)+sx*((js-1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
+                      * inv_12d;
+            } else {
+                val = (4.0*(src[ is   +sx*((js+1)+sy*ks)] - src[ is   +sx*((js-1)+sy*ks)])
+                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is+1)+sx*((js-1)+sy*ks)])
+                          + (src[(is-1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
+                      * inv_12d;
+            }
+            rhs[ctr] += c * val;
+        }
+    };
+
+    return makeStencilOnExprTerm(std::move(src_expr), layout, bcs,
+                                 gpu_op, cpu_op,
+                                 TermType::COMPOSITE, axis, coeff);
+}
+
+Term iso_grad(const Term& t, int axis,
+              const std::vector<BoundaryCondition*>& bcs, double coeff) {
+    return isoGradOnExpr<Term>(t, *detail::repField(t), axis, bcs, coeff);
+}
+Term iso_grad(const RHSExpr& e, int axis,
+              const std::vector<BoundaryCondition*>& bcs, double coeff) {
+    return isoGradOnExpr<RHSExpr>(e, *detail::repField(e), axis, bcs, coeff);
+}
+
+// ===========================================================================
+// Equation::advanceSteady / advanceTransient
+// ===========================================================================
+
+// GPU kernel: dst[i] += coeff * src[i]  (scale-accumulate over full stored array)
+__global__ void kernel_eq_axpy(double* dst, const double* src, double coeff, int n)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < n) dst[tid] += coeff * src[tid];
+}
+
+// ---------------------------------------------------------------------------
+// advanceSteady
+//
+//   1. Apply bcs to sourceField (nullptr → unknown).
+//   2. Evaluate RHS directly into unknown (zero-then-fill via computeRHS).
+//
+// No time advancement, no advanceTimeLevelGPU call.
+// ---------------------------------------------------------------------------
+void Equation::advanceSteady(const std::vector<BoundaryCondition*>& bcs,
+                              ScalarField* sourceField)
+{
+    ScalarField& src = sourceField ? *sourceField : unknown;
+    for (auto* bc : bcs) bc->applyOnGPU(src);
+    computeRHS(unknown);
+}
+
+// ---------------------------------------------------------------------------
+// advanceTransient  (forward Euler)
+//
+//   1. Apply bcs to sourceField (nullptr → unknown).
+//   2. Evaluate RHS into rhs_scratch_ (lazily allocated).
+//   3. unknown.d_curr += dt * rhs_scratch_.d_curr  (axpy over storedSize).
+//   4. unknown.advanceTimeLevelGPU()  (d_prev ← d_curr).
+//   5. Increment step and time.
+// ---------------------------------------------------------------------------
+void Equation::advanceTransient(const std::vector<BoundaryCondition*>& bcs,
+                                 double dt,
+                                 ScalarField* sourceField)
+{
+    ScalarField& src = sourceField ? *sourceField : unknown;
+    for (auto* bc : bcs) bc->applyOnGPU(src);
+
+    // Lazily allocate rhs scratch field.
+    if (!rhs_scratch_) {
+        rhs_scratch_ = std::make_unique<ScalarField>(
+            unknown.mesh, unknown.name + "_rhs", unknown.ghost);
+        rhs_scratch_->allocDevice();
+    }
+
+    computeRHS(*rhs_scratch_);
+
+    int n = static_cast<int>(unknown.storedSize);
+    kernel_eq_axpy<<<(n + 255) / 256, 256>>>(
+        unknown.d_curr, rhs_scratch_->d_curr, dt, n);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    unknown.advanceTimeLevelGPU();
+
+    ++step;
+    time += dt;
 }
 
 } // namespace PhiX

@@ -1,0 +1,28 @@
+{
+    "mesh": {
+        "nx": 10,
+        "ny": 10,
+        "dx": 1.0,
+        "dy": 1.0,
+        "x0": 0.0,
+        "y0": 0.0
+    },
+
+    // 输入向量场文件路径（.vfield 格式）
+    "input": {
+        "path": "input/U.vfield"
+    },
+
+    // 输出 VTS 文件路径
+    "output": {
+        "path": "output/divU.vts"
+    },
+
+    // U 各分量的 ghost 格边界条件
+    "boundary_conditions": {
+        "x_min": "NoFlux",
+        "x_max": "NoFlux",
+        "y_min": "NoFlux",
+        "y_max": "NoFlux"
+    }
+}

@@ -21,7 +21,6 @@
 #include "field/ScalarField.h"
 #include "boundary/BCFactory.h"
 #include "equation/Equation.h"
-#include "solver/Solver.h"
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
@@ -123,27 +122,19 @@ int main(int argc, char* argv[])
         + L * kappa_eta * lap(eta)
     );
 
-    // === 6. Solver ===========================================================
+    // === 6. Time loop ========================================================
     //  eqMu  (STEADY)    -- mu = f'(c,eta) - kappa_c*lap(c)
     //  eqC   (TRANSIENT) -- dc/dt = M*lap(mu)
     //  eqEta (TRANSIENT) -- deta/dt = -L*(...)
-    Solver solver(
-        {
-            { &c,   bcs, &eqMu,  EquationType::STEADY    },
-            { &mu,  bcs, &eqC,   EquationType::TRANSIENT },
-            { &eta, bcs, &eqEta, EquationType::TRANSIENT }
-        },
-        dt, TimeScheme::EULER);
-
-    solver.step = start_step;
-    solver.time = start_step * dt;
+    eqC.step = start_step;
+    eqC.time = start_step * dt;
 
     // === 7. Output & time loop ===============================================
     IO::OutputWriter writer(cfg["output"]);
 
     if (start_step == 0) {
-        writer.writeFields(c,   0, solver.time);
-        writer.writeFields(eta, 0, solver.time);
+        writer.writeFields(c,   0, eqC.time);
+        writer.writeFields(eta, 0, eqC.time);
         std::cout << "Starting CH+AC simulation ("
                   << nSteps << " steps, dt=" << dt << ")\n";
     } else {
@@ -155,15 +146,17 @@ int main(int argc, char* argv[])
 
     writer.resetTimer();
 
-    for (int step = start_step; step < nSteps; ++step) {
-        solver.advance();
+    for (int s = start_step; s < nSteps; ++s) {
+        eqMu.advanceSteady(bcs, &c);
+        eqC.advanceTransient(bcs, dt, &mu);
+        eqEta.advanceTransient(bcs, dt, &eta);
 
-        if (writer.shouldPrint(solver.step))
-            writer.printProgress(solver.step, solver.time);
+        if (writer.shouldPrint(eqC.step))
+            writer.printProgress(eqC.step, eqC.time);
 
-        if (writer.shouldWrite(solver.step)) {
-            writer.writeFields(c,   solver.step, solver.time);
-            writer.writeFields(eta, solver.step, solver.time);
+        if (writer.shouldWrite(eqC.step)) {
+            writer.writeFields(c,   eqC.step, eqC.time);
+            writer.writeFields(eta, eqC.step, eqC.time);
         }
     }
 

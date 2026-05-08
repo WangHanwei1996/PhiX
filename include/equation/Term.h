@@ -155,6 +155,38 @@ Term lap(const ScalarField& f, double coeff = 1.0);
 // coeff * d(f)/d(x_axis)  — 2nd-order central FD component gradient
 Term grad(const ScalarField& f, int axis, double coeff = 1.0);
 
+// coeff * d(f)/d(x_axis) — 9-point isotropic gradient (Patra-Karttunen, 2D).
+// When composed with another grad to form a Laplacian/divergence the
+// resulting stencil is the 9-point isotropic Laplacian, which dramatically
+// reduces grid anisotropy for problems like dendritic solidification.
+// For 1D / 3D meshes (or axis == 2) silently falls back to grad().
+Term iso_grad(const ScalarField& f, int axis, double coeff = 1.0);
+
+// iso_grad on composite expressions (materialises, applies BCs, then 9-pt stencil).
+// Identical to grad(Term, axis, bcs) but uses the isotropic stencil.
+// Falls back to grad(expr, axis, bcs) for non-2D or axis >= 2.
+Term iso_grad(const Term&    t, int axis,
+              const std::vector<BoundaryCondition*>& bcs,
+              double coeff = 1.0);
+Term iso_grad(const RHSExpr& e, int axis,
+              const std::vector<BoundaryCondition*>& bcs,
+              double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// grad_dot(f, g, coeff=1.0) — pointwise dot product of gradients: ∇f · ∇g
+//
+//   rhs[idx] += coeff * Σ_a  (df/dx_a)[idx] * (dg/dx_a)[idx]
+//
+// Uses 2nd-order central FD on all active axes.  Requires ghost cells on
+// both fields (standard BC application before time-stepping is sufficient).
+// Both fields must share the same mesh dimensions and ghost width.
+//
+// Typical use in GFA-type models:
+//   grad_dot(phi_i, phi_j)          // |∇φᵢ · ∇φⱼ|
+//   mul(phi_j, grad_dot(phi_i, phi_j), -eps_ij*eps_ij)
+// ---------------------------------------------------------------------------
+Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff = 1.0);
+
 // ---------------------------------------------------------------------------
 // Differential operators on composite expressions (Term / RHSExpr).
 //
@@ -324,6 +356,58 @@ VectorRHSExpr pw(const VectorField& vf, const ScalarField& sf,
 template<typename Functor>
 VectorRHSExpr pw(const VectorField& vf1, const VectorField& vf2,
                  Functor func, double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// pw on Term expressions — materialise terms into scratch buffers, then apply
+// a user functor pointwise over the physical cells.  Ghost cells are NOT
+// required for pointwise operations, so no BCs are needed here.
+// Mirrors the ScalarField pw overloads; accepts lazy Term expressions.
+// ---------------------------------------------------------------------------
+
+// pw(Term, Functor): rhs[idx] += coeff * func(materialise(t)[idx])
+template<typename Functor>
+Term pw(const Term& t, Functor func, double coeff = 1.0);
+
+// pw(Term, Term, Functor): rhs[idx] += coeff * func(mat(t1)[idx], mat(t2)[idx])
+template<typename Functor>
+Term pw(const Term& t1, const Term& t2, Functor func, double coeff = 1.0);
+
+// pw(Term, Term, Term, Functor)
+template<typename Functor>
+Term pw(const Term& t1, const Term& t2, const Term& t3, Functor func, double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// Named field-multiplication functions — Hadamard (element-wise) product.
+//
+// Function form allows future multiplication variants (dot product, matrix-
+// vector product, etc.) to coexist without operator overload ambiguity.
+//
+//   mul(a, b, coeff=1.0)  ≡  coeff * (a ⊙ b)   (pointwise)
+//
+// Accepts any combination of ScalarField, Term, and RHSExpr operands;
+// mirrors all operator* overloads in FieldOps.inl.
+// ---------------------------------------------------------------------------
+Term mul(const ScalarField& f1, const ScalarField& f2, double coeff = 1.0);
+Term mul(const Term&        t,  const ScalarField& f,  double coeff = 1.0);
+Term mul(const ScalarField& f,  const Term&        t,  double coeff = 1.0);
+Term mul(const Term&        t1, const Term&        t2, double coeff = 1.0);
+Term mul(const RHSExpr&     e,  const ScalarField& f,  double coeff = 1.0);
+Term mul(const ScalarField& f,  const RHSExpr&     e,  double coeff = 1.0);
+Term mul(const RHSExpr&     e1, const RHSExpr&     e2, double coeff = 1.0);
+Term mul(const Term&        t,  const RHSExpr&     e,  double coeff = 1.0);
+Term mul(const RHSExpr&     e,  const Term&        t,  double coeff = 1.0);
+
+// ---------------------------------------------------------------------------
+// Dot product of two vector fields / expressions  →  RHSExpr (scalar)
+//
+//   dot(A, B, coeff=1.0)  ≡  coeff * Σ_c A[c] * B[c]   (pointwise sum)
+//
+// Four overloads for any combination of VectorField and VectorRHSExpr.
+// ---------------------------------------------------------------------------
+RHSExpr dot(const VectorField&    a, const VectorField&    b, double coeff = 1.0);
+RHSExpr dot(const VectorRHSExpr&  a, const VectorField&    b, double coeff = 1.0);
+RHSExpr dot(const VectorField&    a, const VectorRHSExpr&  b, double coeff = 1.0);
+RHSExpr dot(const VectorRHSExpr&  a, const VectorRHSExpr&  b, double coeff = 1.0);
 
 } // namespace PhiX
 

@@ -249,12 +249,13 @@ void writeScalarDat(const ScalarField& f, const std::string& path) {
     ofs << "# x y z value\n";
 
     ofs << std::scientific << std::setprecision(12);
+    const bool is2D = (mesh.n[2] == 1);
     for (int k = 0; k < mesh.n[2]; ++k)
         for (int j = 0; j < mesh.n[1]; ++j)
             for (int i = 0; i < mesh.n[0]; ++i) {
                 double x = mesh.origin[0] + (i + 0.5) * mesh.d[0];
                 double y = mesh.origin[1] + (j + 0.5) * mesh.d[1];
-                double z = mesh.origin[2] + (k + 0.5) * mesh.d[2];
+                double z = is2D ? mesh.origin[2] : mesh.origin[2] + (k + 0.5) * mesh.d[2];
                 ofs << x << "  " << y << "  " << z << "  "
                     << f.curr[physIdx(f, i, j, k)] << "\n";
             }
@@ -364,12 +365,13 @@ void writeVectorDat(const VectorField& vf, const std::string& path) {
 
     ofs << std::scientific << std::setprecision(12);
 
+    const bool is2Dv = (nz == 1);
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
                 double x = mesh.origin[0] + (i + 0.5) * mesh.d[0];
                 double y = mesh.origin[1] + (j + 0.5) * mesh.d[1];
-                double z = mesh.origin[2] + (k + 0.5) * mesh.d[2];
+                double z = is2Dv ? mesh.origin[2] : mesh.origin[2] + (k + 0.5) * mesh.d[2];
                 ofs << x << "  " << y << "  " << z;
                 for (int c = 0; c < N; ++c) {
                     const ScalarField& sf = vf[c];
