@@ -48,6 +48,7 @@ add_library(phix STATIC
     src/field/FieldLayout.cpp
     src/field/ScalarField.cu
     src/field/VectorField.cu
+    src/field/FaceField.cu
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
     src/boundary/Boundary.cu
@@ -84,8 +85,7 @@ add_subdirectory(test/moduleTest)
 # ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
-# TODO(v2.2.0): re-enable after solver refactor
-# add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
+add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 # add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 # add_subdirectory("applications/solvers/glass_formation/2D")
 # add_subdirectory("applications/solvers/glass_formation_4_phases/2D")

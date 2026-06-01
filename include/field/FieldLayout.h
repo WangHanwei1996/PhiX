@@ -8,8 +8,21 @@
 namespace PhiX {
 
 enum class Centering {
-    CELL
+    CELL,
+    FACE_X,  // face-normal in x: nx+1 values, no ghost in x
+    FACE_Y,  // face-normal in y: ny+1 values, no ghost in y
+    FACE_Z   // face-normal in z: nz+1 values, no ghost in z
 };
+
+// Return the normal axis for a face centering (0/1/2), or -1 for CELL.
+constexpr int faceAxis(Centering c) {
+    return (c == Centering::FACE_X) ? 0
+         : (c == Centering::FACE_Y) ? 1
+         : (c == Centering::FACE_Z) ? 2
+         : -1;
+}
+
+constexpr bool isFace(Centering c) { return faceAxis(c) >= 0; }
 
 // ---------------------------------------------------------------------------
 // FieldLayout
@@ -37,10 +50,16 @@ public:
         return *mesh;
     }
 
+    // Face-field index (no ghost shift along normal axis).
+    // For CELL centering all three shifts are +ghost.
+    // For FACE_X the i-shift is 0; j/k still +ghost.
+    // Provides a uniform call site for both cell and face layouts.
     int index(int i, int j, int k) const {
-        return (i + ghost)
-             + storedDims[0] * ((j + ghost)
-             + storedDims[1] *  (k + ghost));
+        int ax = faceAxis(centering);
+        int si = (ax == 0) ? i : (i + ghost);
+        int sj = (ax == 1) ? j : (j + ghost);
+        int sk = (ax == 2) ? k : (k + ghost);
+        return si + storedDims[0] * (sj + storedDims[1] * sk);
     }
     int index(int i, int j) const { return index(i, j, 0); }
     int index(int i) const { return index(i, 0, 0); }
