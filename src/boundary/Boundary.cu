@@ -1,6 +1,7 @@
 #include "boundary/PeriodicBC.h"
 #include "boundary/NoFluxBC.h"
 #include "boundary/FixedBC.h"
+#include "mesh/Mesh.h"
 
 #include <cuda_runtime.h>
 #include <stdexcept>
@@ -15,141 +16,130 @@ namespace PhiX {
         cudaError_t _e = (call);                                               \
         if (_e != cudaSuccess)                                                 \
             throw std::runtime_error(                                          \
-                std::string("CUDA error in " __FILE__ " line ")               \
-                + std::to_string(__LINE__) + ": "                             \
+                std::string("CUDA error in " __FILE__ " line ")                \
+                + std::to_string(__LINE__) + ": "                              \
                 + cudaGetErrorString(_e));                                     \
     } while (0)
 
 // ===========================================================================
-// Generic GPU kernel design
+// Generic patch-aware kernel design
 // ===========================================================================
 //
 // Row-major storage: flat(is, js, ks) = is + sx*(js + sy*ks)
 // where is/js/ks are stored indices (physical index + ghost offset).
 //
-// For each axis we identify:
-//   axis_stride  : distance in flat index between adjacent stored cells
-//                  X -> 1,  Y -> sx,  Z -> sx*sy
-//   face threads : 2-D thread block covering the two remaining dimensions
-//                  in full stored extent (including ghost of other axes).
-//   face_offset  : flat-index contribution from the two thread dims.
+// For each Patch (axis, side, IndexBox region) we identify:
 //
-// This allows one kernel per BC type to handle all three axes uniformly.
+//   axis (normal)         : the BC axis
+//   tangential axes t0,t1 : the other two axes (t0 < t1)
+//   axis_stride           : flat stride along the normal axis
+//   t0_stride, t1_stride  : flat strides along the two tangential axes
+//   t0_count, t1_count    : number of cells along each tangential axis,
+//                           taken from region.extent(t0/t1)
+//   t0_lo, t1_lo          : physical starting index along t0/t1, plus ghost
+//
+// Each thread handles one (s0, s1) cell within the patch's region.
 // ===========================================================================
 
-// ---------------------------------------------------------------------------
-// Helper: compute kernel launch geometry for a given axis
-// ---------------------------------------------------------------------------
-struct FaceParams {
-    int axis_stride;   // stride along the BC axis in flat memory
-    int n_axis;        // number of physical cells along BC axis
-    int n_face0;       // thread count dim 0 (full stored extent)
-    int n_face1;       // thread count dim 1 (full stored extent)
-    int face_stride0;  // flat-index stride for thread dim 0
-    int face_stride1;  // flat-index stride for thread dim 1
+struct PatchParams {
+    int axis_stride;
+    int n_axis;        // physical cells along normal axis
+    int ghost;
+    int t0_stride;
+    int t1_stride;
+    int t0_count;
+    int t1_count;
+    int t0_lo;
+    int t1_lo;
 };
 
-static FaceParams makeFaceParams(const ScalarField& f, Axis ax) {
-    int sx = f.storedDims[0];
-    int sy = f.storedDims[1];
-    int sz = f.storedDims[2];
-    FaceParams p{};
-    switch (ax) {
-        case Axis::X:
-            p.axis_stride  = 1;
-            p.n_axis       = f.mesh.n[0];
-            p.n_face0      = sy;   // threads over j (stored)
-            p.n_face1      = sz;   // threads over k (stored)
-            p.face_stride0 = sx;
-            p.face_stride1 = sx * sy;
-            break;
-        case Axis::Y:
-            p.axis_stride  = sx;
-            p.n_axis       = f.mesh.n[1];
-            p.n_face0      = sx;   // threads over i (stored)
-            p.n_face1      = sz;   // threads over k (stored)
-            p.face_stride0 = 1;
-            p.face_stride1 = sx * sy;
-            break;
-        case Axis::Z:
-            p.axis_stride  = sx * sy;
-            p.n_axis       = f.mesh.n[2];
-            p.n_face0      = sx;   // threads over i (stored)
-            p.n_face1      = sy;   // threads over j (stored)
-            p.face_stride0 = 1;
-            p.face_stride1 = sx;
-            break;
+static PatchParams makePatchParams(const ScalarField& f, const Patch& p) {
+    const int sx = f.storedDims[0];
+    const int sy = f.storedDims[1];
+
+    const int a = static_cast<int>(p.axis);
+    int t0, t1;
+    switch (a) {
+        case 0: t0 = 1; t1 = 2; break;
+        case 1: t0 = 0; t1 = 2; break;
+        default: t0 = 0; t1 = 1; break;
     }
-    return p;
+
+    auto axStride = [&](int axis) {
+        if (axis == 0) return 1;
+        if (axis == 1) return sx;
+        return sx * sy;
+    };
+
+    PatchParams pp{};
+    pp.axis_stride = axStride(a);
+    pp.n_axis      = f.mesh.n[a];
+    pp.ghost       = f.ghost;
+    pp.t0_stride   = axStride(t0);
+    pp.t1_stride   = axStride(t1);
+    pp.t0_count    = p.region.extent(t0);
+    pp.t1_count    = p.region.extent(t1);
+    pp.t0_lo       = p.region.lo[t0] + f.ghost;
+    pp.t1_lo       = p.region.lo[t1] + f.ghost;
+    return pp;
 }
 
 // ---------------------------------------------------------------------------
-// Periodic kernel
-//
-// Each thread handles one (face0, face1) position and fills ALL ghost layers
-// along the BC axis (loop over g = 1..ghost).
-//
-// Low ghost:  stored_idx = ghost - g  <-- copy from stored_idx = ghost + n - g
-// High ghost: stored_idx = ghost+n+g-1 <-- copy from stored_idx = ghost + g - 1
+// Periodic kernel (single patch handles BOTH sides of its axis)
 // ---------------------------------------------------------------------------
 __global__ void kernel_periodic(
         double* data,
-        int n_face0, int n_face1,
+        int t0_count, int t1_count,
+        int t0_stride, int t1_stride,
+        int t0_lo,     int t1_lo,
         int axis_stride,
         int n_axis,
-        int ghost,
-        int face_stride0,
-        int face_stride1)
+        int ghost)
 {
-    int t0 = blockIdx.x * blockDim.x + threadIdx.x;
-    int t1 = blockIdx.y * blockDim.y + threadIdx.y;
-    if (t0 >= n_face0 || t1 >= n_face1) return;
+    int s0 = blockIdx.x * blockDim.x + threadIdx.x;
+    int s1 = blockIdx.y * blockDim.y + threadIdx.y;
+    if (s0 >= t0_count || s1 >= t1_count) return;
 
-    int face_off = t0 * face_stride0 + t1 * face_stride1;
+    int face_off = (t0_lo + s0) * t0_stride + (t1_lo + s1) * t1_stride;
 
     for (int g = 1; g <= ghost; ++g) {
-        int lo_ghost  = (ghost - g)          * axis_stride + face_off;
-        int lo_source = (ghost + n_axis - g) * axis_stride + face_off;
+        int lo_ghost  = (ghost - g)              * axis_stride + face_off;
+        int lo_source = (ghost + n_axis - g)     * axis_stride + face_off;
         int hi_ghost  = (ghost + n_axis + g - 1) * axis_stride + face_off;
-        int hi_source = (ghost + g - 1)      * axis_stride + face_off;
+        int hi_source = (ghost + g - 1)          * axis_stride + face_off;
 
-        data[lo_ghost]  = data[lo_source];
-        data[hi_ghost]  = data[hi_source];
+        data[lo_ghost] = data[lo_source];
+        data[hi_ghost] = data[hi_source];
     }
 }
 
 // ---------------------------------------------------------------------------
-// NoFlux (zero-gradient) kernel
-//
-// Low ghost:  stored_idx = ghost - g  <-- copy from stored_idx = ghost (i=0)
-// High ghost: stored_idx = ghost+n+g-1 <-- copy from stored_idx = ghost+n-1
-// All ghost layers get the same nearest-boundary value (constant extrapolation).
+// NoFlux (zero-gradient) kernel — single side determined by `is_low`
 // ---------------------------------------------------------------------------
 __global__ void kernel_noflux(
         double* data,
-        int n_face0, int n_face1,
+        int t0_count, int t1_count,
+        int t0_stride, int t1_stride,
+        int t0_lo,     int t1_lo,
         int axis_stride,
         int n_axis,
         int ghost,
-        int face_stride0,
-        int face_stride1,
-        bool do_low, bool do_high)
+        bool is_low)
 {
-    int t0 = blockIdx.x * blockDim.x + threadIdx.x;
-    int t1 = blockIdx.y * blockDim.y + threadIdx.y;
-    if (t0 >= n_face0 || t1 >= n_face1) return;
+    int s0 = blockIdx.x * blockDim.x + threadIdx.x;
+    int s1 = blockIdx.y * blockDim.y + threadIdx.y;
+    if (s0 >= t0_count || s1 >= t1_count) return;
 
-    int face_off = t0 * face_stride0 + t1 * face_stride1;
+    int face_off = (t0_lo + s0) * t0_stride + (t1_lo + s1) * t1_stride;
 
-    if (do_low) {
-        int src = ghost * axis_stride + face_off;          // physical i = 0
+    if (is_low) {
+        int src = ghost * axis_stride + face_off;
         for (int g = 1; g <= ghost; ++g) {
             int dst = (ghost - g) * axis_stride + face_off;
             data[dst] = data[src];
         }
-    }
-    if (do_high) {
-        int src = (ghost + n_axis - 1) * axis_stride + face_off;  // physical i = n-1
+    } else {
+        int src = (ghost + n_axis - 1) * axis_stride + face_off;
         for (int g = 1; g <= ghost; ++g) {
             int dst = (ghost + n_axis + g - 1) * axis_stride + face_off;
             data[dst] = data[src];
@@ -158,38 +148,95 @@ __global__ void kernel_noflux(
 }
 
 // ---------------------------------------------------------------------------
-// Fixed (Dirichlet) kernel
-//
-// Sets all ghost cells on selected side(s) to a constant value.
-// (Constant fill; sufficient for first-order stencils.)
+// Fixed (Dirichlet) kernel — single side determined by `is_low`
 // ---------------------------------------------------------------------------
 __global__ void kernel_fixed(
         double* data,
-        int n_face0, int n_face1,
+        int t0_count, int t1_count,
+        int t0_stride, int t1_stride,
+        int t0_lo,     int t1_lo,
         int axis_stride,
         int n_axis,
         int ghost,
-        int face_stride0,
-        int face_stride1,
-        bool do_low, bool do_high,
+        bool is_low,
         double value)
 {
-    int t0 = blockIdx.x * blockDim.x + threadIdx.x;
-    int t1 = blockIdx.y * blockDim.y + threadIdx.y;
-    if (t0 >= n_face0 || t1 >= n_face1) return;
+    int s0 = blockIdx.x * blockDim.x + threadIdx.x;
+    int s1 = blockIdx.y * blockDim.y + threadIdx.y;
+    if (s0 >= t0_count || s1 >= t1_count) return;
 
-    int face_off = t0 * face_stride0 + t1 * face_stride1;
+    int face_off = (t0_lo + s0) * t0_stride + (t1_lo + s1) * t1_stride;
 
-    if (do_low) {
+    if (is_low) {
         for (int g = 1; g <= ghost; ++g) {
             int dst = (ghost - g) * axis_stride + face_off;
             data[dst] = value;
         }
-    }
-    if (do_high) {
+    } else {
         for (int g = 1; g <= ghost; ++g) {
             int dst = (ghost + n_axis + g - 1) * axis_stride + face_off;
             data[dst] = value;
+        }
+    }
+}
+
+// ===========================================================================
+// CPU helpers (mirror of device kernels)
+// ===========================================================================
+
+static void cpu_periodic(double* data, const PatchParams& pp) {
+    for (int s0 = 0; s0 < pp.t0_count; ++s0)
+    for (int s1 = 0; s1 < pp.t1_count; ++s1) {
+        int face_off = (pp.t0_lo + s0) * pp.t0_stride
+                     + (pp.t1_lo + s1) * pp.t1_stride;
+        for (int g = 1; g <= pp.ghost; ++g) {
+            int lo_ghost  = (pp.ghost - g)                 * pp.axis_stride + face_off;
+            int lo_source = (pp.ghost + pp.n_axis - g)     * pp.axis_stride + face_off;
+            int hi_ghost  = (pp.ghost + pp.n_axis + g - 1) * pp.axis_stride + face_off;
+            int hi_source = (pp.ghost + g - 1)             * pp.axis_stride + face_off;
+            data[lo_ghost] = data[lo_source];
+            data[hi_ghost] = data[hi_source];
+        }
+    }
+}
+
+static void cpu_noflux(double* data, const PatchParams& pp, bool is_low) {
+    for (int s0 = 0; s0 < pp.t0_count; ++s0)
+    for (int s1 = 0; s1 < pp.t1_count; ++s1) {
+        int face_off = (pp.t0_lo + s0) * pp.t0_stride
+                     + (pp.t1_lo + s1) * pp.t1_stride;
+        if (is_low) {
+            int src = pp.ghost * pp.axis_stride + face_off;
+            for (int g = 1; g <= pp.ghost; ++g) {
+                int dst = (pp.ghost - g) * pp.axis_stride + face_off;
+                data[dst] = data[src];
+            }
+        } else {
+            int src = (pp.ghost + pp.n_axis - 1) * pp.axis_stride + face_off;
+            for (int g = 1; g <= pp.ghost; ++g) {
+                int dst = (pp.ghost + pp.n_axis + g - 1) * pp.axis_stride + face_off;
+                data[dst] = data[src];
+            }
+        }
+    }
+}
+
+static void cpu_fixed(double* data, const PatchParams& pp,
+                      bool is_low, double value) {
+    for (int s0 = 0; s0 < pp.t0_count; ++s0)
+    for (int s1 = 0; s1 < pp.t1_count; ++s1) {
+        int face_off = (pp.t0_lo + s0) * pp.t0_stride
+                     + (pp.t1_lo + s1) * pp.t1_stride;
+        if (is_low) {
+            for (int g = 1; g <= pp.ghost; ++g) {
+                int dst = (pp.ghost - g) * pp.axis_stride + face_off;
+                data[dst] = value;
+            }
+        } else {
+            for (int g = 1; g <= pp.ghost; ++g) {
+                int dst = (pp.ghost + pp.n_axis + g - 1) * pp.axis_stride + face_off;
+                data[dst] = value;
+            }
         }
     }
 }
@@ -198,42 +245,27 @@ __global__ void kernel_fixed(
 // PeriodicBC
 // ===========================================================================
 
-PeriodicBC::PeriodicBC(Axis axis)
-    : BoundaryCondition(axis, Side::BOTH) {}
+PeriodicBC::PeriodicBC(const Patch& patch) : BoundaryCondition(patch) {}
 
 void PeriodicBC::applyOnCPU(ScalarField& f) const {
-    int g   = f.ghost;
-    double* data = f.curr.data();
-
-    // Loop using FaceParams logic directly on CPU
-    auto fp = makeFaceParams(f, axis);
-    for (int t0 = 0; t0 < fp.n_face0; ++t0)
-    for (int t1 = 0; t1 < fp.n_face1; ++t1) {
-        int face_off = t0 * fp.face_stride0 + t1 * fp.face_stride1;
-        for (int layer = 1; layer <= g; ++layer) {
-            int lo_ghost  = (g - layer)             * fp.axis_stride + face_off;
-            int lo_source = (g + fp.n_axis - layer) * fp.axis_stride + face_off;
-            int hi_ghost  = (g + fp.n_axis + layer - 1) * fp.axis_stride + face_off;
-            int hi_source = (g + layer - 1)          * fp.axis_stride + face_off;
-            data[lo_ghost]  = data[lo_source];
-            data[hi_ghost]  = data[hi_source];
-        }
-    }
+    auto pp = makePatchParams(f, patch);
+    cpu_periodic(f.curr.data(), pp);
 }
 
 void PeriodicBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("PeriodicBC::applyOnGPU: device not allocated");
 
-    auto fp = makeFaceParams(f, axis);
+    auto pp = makePatchParams(f, patch);
     dim3 block(16, 16);
-    dim3 grid((fp.n_face0 + 15) / 16, (fp.n_face1 + 15) / 16);
+    dim3 grid((pp.t0_count + 15) / 16, (pp.t1_count + 15) / 16);
 
     kernel_periodic<<<grid, block>>>(
         f.d_curr,
-        fp.n_face0, fp.n_face1,
-        fp.axis_stride, fp.n_axis, f.ghost,
-        fp.face_stride0, fp.face_stride1);
+        pp.t0_count, pp.t1_count,
+        pp.t0_stride, pp.t1_stride,
+        pp.t0_lo,     pp.t1_lo,
+        pp.axis_stride, pp.n_axis, pp.ghost);
 
     CUDA_CHECK(cudaGetLastError());
 }
@@ -242,55 +274,28 @@ void PeriodicBC::applyOnGPU(ScalarField& f) const {
 // NoFluxBC
 // ===========================================================================
 
-NoFluxBC::NoFluxBC(Axis axis, Side side)
-    : BoundaryCondition(axis, side) {}
+NoFluxBC::NoFluxBC(const Patch& patch) : BoundaryCondition(patch) {}
 
 void NoFluxBC::applyOnCPU(ScalarField& f) const {
-    bool do_low  = (side == Side::LOW  || side == Side::BOTH);
-    bool do_high = (side == Side::HIGH || side == Side::BOTH);
-
-    auto fp = makeFaceParams(f, axis);
-    int  g  = f.ghost;
-    double* data = f.curr.data();
-
-    for (int t0 = 0; t0 < fp.n_face0; ++t0)
-    for (int t1 = 0; t1 < fp.n_face1; ++t1) {
-        int face_off = t0 * fp.face_stride0 + t1 * fp.face_stride1;
-
-        if (do_low) {
-            int src = g * fp.axis_stride + face_off;
-            for (int layer = 1; layer <= g; ++layer) {
-                int dst = (g - layer) * fp.axis_stride + face_off;
-                data[dst] = data[src];
-            }
-        }
-        if (do_high) {
-            int src = (g + fp.n_axis - 1) * fp.axis_stride + face_off;
-            for (int layer = 1; layer <= g; ++layer) {
-                int dst = (g + fp.n_axis + layer - 1) * fp.axis_stride + face_off;
-                data[dst] = data[src];
-            }
-        }
-    }
+    auto pp = makePatchParams(f, patch);
+    cpu_noflux(f.curr.data(), pp, patch.side == Side::LOW);
 }
 
 void NoFluxBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("NoFluxBC::applyOnGPU: device not allocated");
 
-    bool do_low  = (side == Side::LOW  || side == Side::BOTH);
-    bool do_high = (side == Side::HIGH || side == Side::BOTH);
-
-    auto fp = makeFaceParams(f, axis);
+    auto pp = makePatchParams(f, patch);
     dim3 block(16, 16);
-    dim3 grid((fp.n_face0 + 15) / 16, (fp.n_face1 + 15) / 16);
+    dim3 grid((pp.t0_count + 15) / 16, (pp.t1_count + 15) / 16);
 
     kernel_noflux<<<grid, block>>>(
         f.d_curr,
-        fp.n_face0, fp.n_face1,
-        fp.axis_stride, fp.n_axis, f.ghost,
-        fp.face_stride0, fp.face_stride1,
-        do_low, do_high);
+        pp.t0_count, pp.t1_count,
+        pp.t0_stride, pp.t1_stride,
+        pp.t0_lo,     pp.t1_lo,
+        pp.axis_stride, pp.n_axis, pp.ghost,
+        patch.side == Side::LOW);
 
     CUDA_CHECK(cudaGetLastError());
 }
@@ -299,53 +304,30 @@ void NoFluxBC::applyOnGPU(ScalarField& f) const {
 // FixedBC
 // ===========================================================================
 
-FixedBC::FixedBC(Axis axis, Side side, double value)
-    : BoundaryCondition(axis, side), value(value) {}
+FixedBC::FixedBC(const Patch& patch, double value)
+    : BoundaryCondition(patch), value(value) {}
 
 void FixedBC::applyOnCPU(ScalarField& f) const {
-    bool do_low  = (side == Side::LOW  || side == Side::BOTH);
-    bool do_high = (side == Side::HIGH || side == Side::BOTH);
-
-    auto fp = makeFaceParams(f, axis);
-    int  g  = f.ghost;
-    double* data = f.curr.data();
-
-    for (int t0 = 0; t0 < fp.n_face0; ++t0)
-    for (int t1 = 0; t1 < fp.n_face1; ++t1) {
-        int face_off = t0 * fp.face_stride0 + t1 * fp.face_stride1;
-
-        if (do_low) {
-            for (int layer = 1; layer <= g; ++layer) {
-                int dst = (g - layer) * fp.axis_stride + face_off;
-                data[dst] = value;
-            }
-        }
-        if (do_high) {
-            for (int layer = 1; layer <= g; ++layer) {
-                int dst = (g + fp.n_axis + layer - 1) * fp.axis_stride + face_off;
-                data[dst] = value;
-            }
-        }
-    }
+    auto pp = makePatchParams(f, patch);
+    cpu_fixed(f.curr.data(), pp, patch.side == Side::LOW, value);
 }
 
 void FixedBC::applyOnGPU(ScalarField& f) const {
     if (!f.deviceAllocated())
         throw std::runtime_error("FixedBC::applyOnGPU: device not allocated");
 
-    bool do_low  = (side == Side::LOW  || side == Side::BOTH);
-    bool do_high = (side == Side::HIGH || side == Side::BOTH);
-
-    auto fp = makeFaceParams(f, axis);
+    auto pp = makePatchParams(f, patch);
     dim3 block(16, 16);
-    dim3 grid((fp.n_face0 + 15) / 16, (fp.n_face1 + 15) / 16);
+    dim3 grid((pp.t0_count + 15) / 16, (pp.t1_count + 15) / 16);
 
     kernel_fixed<<<grid, block>>>(
         f.d_curr,
-        fp.n_face0, fp.n_face1,
-        fp.axis_stride, fp.n_axis, f.ghost,
-        fp.face_stride0, fp.face_stride1,
-        do_low, do_high, value);
+        pp.t0_count, pp.t1_count,
+        pp.t0_stride, pp.t1_stride,
+        pp.t0_lo,     pp.t1_lo,
+        pp.axis_stride, pp.n_axis, pp.ghost,
+        patch.side == Side::LOW,
+        value);
 
     CUDA_CHECK(cudaGetLastError());
 }

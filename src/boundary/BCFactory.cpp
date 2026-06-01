@@ -21,7 +21,7 @@ static std::string getBCType(const nlohmann::json& v)
 // ---------------------------------------------------------------------------
 // Helper: process one axis pair (lo/hi) from the JSON config
 // ---------------------------------------------------------------------------
-static void addAxisBCs(BCSet& set, Axis axis,
+static void addAxisBCs(const Mesh& mesh, BCSet& set, Axis axis,
                        const nlohmann::json& lo, const nlohmann::json& hi)
 {
     std::string lo_type = getBCType(lo);
@@ -38,7 +38,7 @@ static void addAxisBCs(BCSet& set, Axis axis,
     }
 
     if (lo_periodic) {
-        set.storage.push_back(std::make_unique<PeriodicBC>(axis));
+        set.storage.push_back(std::make_unique<PeriodicBC>(mesh.facePatch(axis, Side::LOW)));
         set.ptrs.push_back(set.storage.back().get());
         return;
     }
@@ -46,13 +46,14 @@ static void addAxisBCs(BCSet& set, Axis axis,
     // Non-periodic: handle each side independently
     auto addSide = [&](const nlohmann::json& cfg, Side side) {
         std::string type = getBCType(cfg);
+        const Patch& patch = mesh.facePatch(axis, side);
         if (type == "NoFlux") {
-            set.storage.push_back(std::make_unique<NoFluxBC>(axis, side));
+            set.storage.push_back(std::make_unique<NoFluxBC>(patch));
             set.ptrs.push_back(set.storage.back().get());
         } else if (type == "Fixed") {
             double val = (cfg.is_object() && cfg.contains("value"))
                          ? cfg.at("value").get<double>() : 0.0;
-            set.storage.push_back(std::make_unique<FixedBC>(axis, side, val));
+            set.storage.push_back(std::make_unique<FixedBC>(patch, val));
             set.ptrs.push_back(set.storage.back().get());
         } else {
             throw std::runtime_error(
@@ -67,25 +68,25 @@ static void addAxisBCs(BCSet& set, Axis axis,
 // ---------------------------------------------------------------------------
 // buildBCs
 // ---------------------------------------------------------------------------
-BCSet buildBCs(const nlohmann::json& bc_config)
+BCSet buildBCs(const Mesh& mesh, const nlohmann::json& bc_config)
 {
     BCSet set;
 
     // X axis (required)
-    addAxisBCs(set, Axis::X,
+    addAxisBCs(mesh, set, Axis::X,
                bc_config.at("x_min"),
                bc_config.at("x_max"));
 
     // Y axis (required for 2D/3D)
     if (bc_config.contains("y_min") && bc_config.contains("y_max")) {
-        addAxisBCs(set, Axis::Y,
+        addAxisBCs(mesh, set, Axis::Y,
                    bc_config.at("y_min"),
                    bc_config.at("y_max"));
     }
 
     // Z axis (optional, for 3D)
     if (bc_config.contains("z_min") && bc_config.contains("z_max")) {
-        addAxisBCs(set, Axis::Z,
+        addAxisBCs(mesh, set, Axis::Z,
                    bc_config.at("z_min"),
                    bc_config.at("z_max"));
     }

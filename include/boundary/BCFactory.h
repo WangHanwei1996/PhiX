@@ -1,6 +1,7 @@
 #pragma once
 
 #include "boundary/BoundaryCondition.h"
+#include "mesh/Mesh.h"
 
 #include <nlohmann/json.hpp>
 #include <memory>
@@ -36,9 +37,12 @@ struct BCSet {
 //   - Periodic must be set on both sides of the same axis; mismatched
 //     Periodic/non-Periodic on the same axis throws std::runtime_error.
 //   - z_min / z_max are processed when present (3D problems).
+//   - This helper resolves the legacy x_min/x_max style config onto the
+//     Mesh default face patches (xmin/xmax/...); if a face has been split
+//     into multiple sub-patches, callers must build BCs manually.
 //
 // Supported BC types: "Periodic", "NoFlux", "Fixed" (Dirichlet).
 // ---------------------------------------------------------------------------
-BCSet buildBCs(const nlohmann::json& bc_config);
+BCSet buildBCs(const Mesh& mesh, const nlohmann::json& bc_config);
 
 } // namespace PhiX

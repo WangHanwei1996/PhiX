@@ -1,19 +1,16 @@
 #pragma once
 
+#include "mesh/Patch.h"
 #include "field/ScalarField.h"
 #include "field/VectorField.h"
 
 namespace PhiX {
 
 // ---------------------------------------------------------------------------
-// Axis and Side enumerations
-// ---------------------------------------------------------------------------
-
-enum class Axis { X = 0, Y = 1, Z = 2 };
-enum class Side { LOW, HIGH, BOTH };
-
-// ---------------------------------------------------------------------------
 // BoundaryCondition  --  abstract base class
+//
+// Bound to a Patch (a named slice of one mesh face).  The Patch determines
+// which boundary cells this BC fills; the BC subclass determines HOW.
 //
 // Concrete subclasses implement applyOnCPU / applyOnGPU for ScalarField.
 // VectorField overloads have default implementations that apply the BC
@@ -23,11 +20,14 @@ enum class Side { LOW, HIGH, BOTH };
 
 class BoundaryCondition {
 public:
-    Axis axis;
-    Side side;
+    const Patch& patch;
 
-    BoundaryCondition(Axis axis, Side side) : axis(axis), side(side) {}
+    explicit BoundaryCondition(const Patch& p) : patch(p) {}
     virtual ~BoundaryCondition() = default;
+
+    // Convenience: axis / side of the bound patch
+    Axis axis() const { return patch.axis; }
+    Side side() const { return patch.side; }
 
     // --- ScalarField interface (must be implemented by subclasses) ----------
     virtual void applyOnCPU(ScalarField& f) const = 0;

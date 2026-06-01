@@ -20,7 +20,7 @@ class FixedBC : public BoundaryCondition {
 public:
     double value;
 
-    FixedBC(Axis axis, Side side, double value);
+    FixedBC(const Patch& patch, double value);
 
     using BoundaryCondition::applyOnCPU;
     using BoundaryCondition::applyOnGPU;

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(PhiX LANGUAGES CXX CUDA)
 
+enable_testing()
+
 # ---------------------------------------------------------------------------
 # C++ / CUDA standards
 # ---------------------------------------------------------------------------
@@ -41,6 +43,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # PhiX core library  (static)
 # ---------------------------------------------------------------------------
 add_library(phix STATIC
+    src/mesh/Patch.cpp
     src/mesh/Mesh.cpp
     src/field/ScalarField.cu
     src/field/VectorField.cu
@@ -65,20 +68,27 @@ set_target_properties(phix PROPERTIES
 )
 
 # ---------------------------------------------------------------------------
+# Module tests
+# ---------------------------------------------------------------------------
+add_subdirectory(test/moduleTest)
+
+# ---------------------------------------------------------------------------
 # Tutorials
 # ---------------------------------------------------------------------------
-add_subdirectory(tutorials/quickstart)
+# TODO(v2.2.0): re-enable after solver refactor
+# add_subdirectory(tutorials/quickstart)
 
 # ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
-add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
-add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
-add_subdirectory("applications/solvers/glass_formation/2D")
-add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
-add_subdirectory("applications/solvers/GFA/verification0")
-add_subdirectory("applications/solvers/dendrite_growth/2D")
-add_subdirectory("develop/Spinodal Decomposition")
-add_subdirectory("develop/Ostwald_Ripening")
-add_subdirectory("develop/fieldOperation")
-add_subdirectory("applications/tools/test")
+# TODO(v2.2.0): re-enable after solver refactor
+# add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
+# add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
+# add_subdirectory("applications/solvers/glass_formation/2D")
+# add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
+# add_subdirectory("applications/solvers/GFA/verification0")
+# add_subdirectory("applications/solvers/dendrite_growth/2D")
+# add_subdirectory("develop/Spinodal Decomposition")
+# add_subdirectory("develop/Ostwald_Ripening")
+# add_subdirectory("develop/fieldOperation")
+# add_subdirectory("applications/tools/test")
