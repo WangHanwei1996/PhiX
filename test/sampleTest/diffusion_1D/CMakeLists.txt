@@ -6,3 +6,13 @@ set_target_properties(diffusion_1D PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/case"
 )
+
+# Side-by-side comparison: staggered face-flux vs. collocated two-step
+add_executable(diffusion_compare diffusion_compare.cu)
+
+target_link_libraries(diffusion_compare PRIVATE phix)
+
+set_target_properties(diffusion_compare PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/case_compare"
+)
