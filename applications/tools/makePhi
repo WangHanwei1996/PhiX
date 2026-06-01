@@ -118,7 +118,25 @@ def cmd_generate(cwd: Path) -> None:
     root_text = root_cml.read_text()
     add_sub   = f'add_subdirectory("{rel.as_posix()}")'
 
-    if add_sub in root_text:
+    # Collect all currently active (non-commented) add_subdirectory paths.
+    _active_pat = re.compile(
+        r'^add_subdirectory\s*\(\s*"?([^")\s]+)"?\s*\)', re.MULTILINE)
+    active_dirs = {m.group(1) for m in _active_pat.finditer(root_text)}
+
+    # Check whether any ancestor of cwd is already registered — if so,
+    # cwd is already included transitively and adding it again would cause
+    # a duplicate binary-directory error in CMake.
+    parts = rel.parts
+    ancestor_registered = next(
+        (("/".join(parts[:d])) for d in range(1, len(parts))
+         if "/".join(parts[:d]) in active_dirs),
+        None,
+    )
+
+    if ancestor_registered:
+        print(f"[makePhi] Skipping root registration: already included via\n"
+              f"          {ancestor_registered}")
+    elif add_sub in root_text:
         print(f"[makePhi] Already registered: {add_sub}")
     else:
         # Uncomment if a commented-out version exists; otherwise insert fresh.
