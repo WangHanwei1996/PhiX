@@ -84,6 +84,11 @@ add_subdirectory(test/moduleTest)
 # add_subdirectory(tutorials/quickstart)
 
 # ---------------------------------------------------------------------------
+# Sample tests
+# ---------------------------------------------------------------------------
+add_subdirectory(test/sampleTest)
+
+# ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
 add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
