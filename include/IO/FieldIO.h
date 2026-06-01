@@ -59,6 +59,20 @@ int resolveStartStep(const std::string& startFrom,
 /// Prints a status line to stdout.
 void initField(ScalarField& f, int startStep);
 
+/// Named initializer overload.  When startStep == 0 and no file is found
+/// (or you want to bypass the file entirely), pass a non-empty `namedInit`
+/// string to generate the initial condition analytically.
+///
+/// Supported formats:
+///   "uniform:<value>"           → constant, e.g. "uniform:0.5"
+///   "random:<lo>:<hi>"          → uniform random in [lo, hi]
+///   "linear:x:<lo>:<hi>"        → linear ramp along x from lo (left) to hi (right)
+///   "linear:y:<lo>:<hi>"        → linear ramp along y
+///   "linear:z:<lo>:<hi>"        → linear ramp along z
+///
+/// If namedInit is empty and startStep == 0, falls back to file-based init.
+void initField(ScalarField& f, int startStep, const std::string& namedInit);
+
 // ---------------------------------------------------------------------------
 // Vector field IO
 // ---------------------------------------------------------------------------

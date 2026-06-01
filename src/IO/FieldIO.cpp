@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -794,6 +795,89 @@ void initField(ScalarField& f, int startStep)
         std::cout << "  warm start: loading " << path << "\n";
     }
     readField(f, path);
+}
+
+void initField(ScalarField& f, int startStep, const std::string& namedInit)
+{
+    // Warm start always reads from file regardless of namedInit.
+    if (startStep > 0) {
+        initField(f, startStep);
+        return;
+    }
+
+    // Cold start: if namedInit is empty, try file-based init.
+    if (namedInit.empty()) {
+        initField(f, startStep);
+        return;
+    }
+
+    // Parse namedInit string.
+    // Split by ':'
+    std::vector<std::string> tokens;
+    {
+        std::istringstream ss(namedInit);
+        std::string tok;
+        while (std::getline(ss, tok, ':'))
+            tokens.push_back(tok);
+    }
+
+    const std::string& kind = tokens[0];
+
+    if (kind == "uniform") {
+        if (tokens.size() < 2)
+            throw std::runtime_error(
+                "IO::initField: \"uniform\" requires a value, e.g. \"uniform:0.5\"");
+        double val = std::stod(tokens[1]);
+        std::cout << "  named init: uniform(" << val << ") for field \"" << f.name << "\"\n";
+        f.initialize([val](double, double, double) { return val; });
+
+    } else if (kind == "random") {
+        if (tokens.size() < 3)
+            throw std::runtime_error(
+                "IO::initField: \"random\" requires lo and hi, e.g. \"random:0.4:0.6\"");
+        double lo = std::stod(tokens[1]);
+        double hi = std::stod(tokens[2]);
+        std::cout << "  named init: random[" << lo << ", " << hi
+                  << "] for field \"" << f.name << "\"\n";
+        // Simple LCG seeded from field name hash for reproducibility.
+        std::size_t seed = std::hash<std::string>{}(f.name);
+        f.initialize([lo, hi, &seed](double, double, double) mutable {
+            // xorshift64
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            double t = static_cast<double>(seed) / static_cast<double>(
+                std::numeric_limits<std::size_t>::max());
+            return lo + t * (hi - lo);
+        });
+
+    } else if (kind == "linear") {
+        if (tokens.size() < 4)
+            throw std::runtime_error(
+                "IO::initField: \"linear\" requires axis and lo/hi, "
+                "e.g. \"linear:x:0.3:0.7\"");
+        const std::string& axisStr = tokens[1];
+        double lo = std::stod(tokens[2]);
+        double hi = std::stod(tokens[3]);
+
+        int    axis = (axisStr == "x") ? 0 : (axisStr == "y") ? 1 : 2;
+        double origin = f.mesh.origin[axis];
+        double length = f.mesh.n[axis] * f.mesh.d[axis];
+
+        std::cout << "  named init: linear along " << axisStr
+                  << " [" << lo << ", " << hi << "] for field \"" << f.name << "\"\n";
+
+        f.initialize([lo, hi, axis, origin, length](double x, double y, double z) {
+            double coord = (axis == 0) ? x : (axis == 1) ? y : z;
+            double t = (length > 0.0) ? (coord - origin) / length : 0.0;
+            return lo + t * (hi - lo);
+        });
+
+    } else {
+        throw std::runtime_error(
+            std::string("IO::initField: unknown named initializer \"") + kind
+            + "\". Supported: uniform, random, linear");
+    }
 }
 
 } // namespace IO

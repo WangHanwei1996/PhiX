@@ -105,6 +105,22 @@ public:
     void fillCurr(double value);
     void fillPrev(double value);
 
+    // Initialize curr by evaluating fn(x, y, z) at every physical cell centre.
+    // fn must be callable as `double fn(double x, double y, double z)`.
+    // Uses mesh.coord(axis, i) for coordinates; ghost cells are left unchanged.
+    template<typename Fn>
+    void initialize(Fn fn) {
+        const int nx = mesh.n[0], ny = mesh.n[1], nz = mesh.n[2];
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            double x = mesh.coord(0, i);
+            double y = (mesh.dim >= 2) ? mesh.coord(1, j) : 0.0;
+            double z = (mesh.dim >= 3) ? mesh.coord(2, k) : 0.0;
+            curr[static_cast<std::size_t>(layout.index(i, j, k))] = fn(x, y, z);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Time-stepping
     // -----------------------------------------------------------------------

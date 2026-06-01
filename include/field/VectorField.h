@@ -87,6 +87,33 @@ public:
     void fillCurr(double value);
     void fillPrev(double value);
 
+    // Initialize each component's curr by evaluating fn(x, y, z) which returns
+    // an array-like of N values (e.g. std::array<double,N> or a lambda returning
+    // a value per component index).
+    // Overload (a): fn(x,y,z) returns std::array<double,N> (or similar indexable).
+    template<typename Fn>
+    void initialize(Fn fn) {
+        const int nx = mesh.n[0], ny = mesh.n[1], nz = mesh.n[2];
+        const int nc = nComponents();
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            double x = mesh.coord(0, i);
+            double y = (mesh.dim >= 2) ? mesh.coord(1, j) : 0.0;
+            double z = (mesh.dim >= 3) ? mesh.coord(2, k) : 0.0;
+            auto vals = fn(x, y, z);
+            int idx = layout.index(i, j, k);
+            for (int c = 0; c < nc; ++c)
+                (*this)[c].curr[static_cast<std::size_t>(idx)] = vals[c];
+        }
+    }
+
+    // Overload (b): initialize a single component via fn(x,y,z)->double.
+    template<typename Fn>
+    void initializeComponent(int comp, Fn fn) {
+        (*this)[comp].initialize(fn);
+    }
+
     // -----------------------------------------------------------------------
     // Time-stepping — delegates to all components
     // -----------------------------------------------------------------------
