@@ -23,6 +23,7 @@ Notes
 import sys
 import os
 import re
+import subprocess
 from pathlib import Path
 
 # ── marker written at the top of every generated CMakeLists.txt ─────────────
@@ -132,10 +133,30 @@ def cmd_generate(cwd: Path) -> None:
         root_cml.write_text(root_text)
 
     targets = " ".join(cu.stem for cu in cu_files)
-    print(
-        f"\n[makePhi] Done.  To build:\n"
-        f"    cd {root}/build && make {targets}"
-    )
+
+    # ── build ────────────────────────────────────────────────────────────────
+    build_dir = root / "build"
+    if not build_dir.is_dir():
+        print(f"[makePhi] No build/ directory found at {build_dir}\n"
+              f"          Run: mkdir -p {build_dir} && cd {build_dir} && cmake ..")
+        return
+
+    # cmake configure (always re-run so the new add_subdirectory is picked up)
+    print(f"\n[makePhi] Configuring... (cmake {root})")
+    r = subprocess.run(["cmake", str(root)], cwd=build_dir)
+    if r.returncode != 0:
+        _err("cmake configuration failed.")
+
+    # build only the new targets
+    nproc = os.cpu_count() or 1
+    target_list = targets.split()
+    print(f"\n[makePhi] Building: {targets}")
+    r = subprocess.run(["make", f"-j{nproc}"] + target_list, cwd=build_dir)
+    if r.returncode != 0:
+        _err("make failed.")
+
+    print(f"\n[makePhi] Done.  Executables written to:\n"
+          f"    {cwd}/")
 
 
 def cmd_clean(cwd: Path) -> None:
