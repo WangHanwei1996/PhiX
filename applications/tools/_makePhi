@@ -200,13 +200,15 @@ def cmd_clean(cwd: Path) -> None:
     else:
         print(f"[makePhi] No CMakeLists.txt found in {cwd}")
 
-    # ── remove compiled executables ──────────────────────────────────────────
+    # ── remove compiled executables (search entire source tree) ─────────────
     for name in targets_to_remove:
-        exe = cwd / name
-        if exe.exists():
-            exe.unlink()
-            print(f"[makePhi] Removed executable  {exe.relative_to(root)}")
-        else:
+        found_any = False
+        for exe in cwd.rglob(name):
+            if exe.is_file() and os.access(exe, os.X_OK):
+                exe.unlink()
+                print(f"[makePhi] Removed executable  {exe.relative_to(root)}")
+                found_any = True
+        if not found_any:
             print(f"[makePhi] Executable not found: {name}")
 
     # ── root CMakeLists.txt ──────────────────────────────────────────────────
