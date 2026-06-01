@@ -94,6 +94,7 @@ struct Term {
     // to a representative source field that is guaranteed to be on device.
     const ScalarField*  field = nullptr;
     int           axis  = 0;         // for GRADIENT: 0=x, 1=y, 2=z
+    int           ghostRequired = 0; // stencil width required by this term
 
     TermLauncher  gpu_launcher;   // host fn that launches GPU kernel
     TermLauncher  cpu_kernel;     // pure CPU fallback
@@ -146,7 +147,11 @@ inline RHSExpr operator-(const Term& t, const RHSExpr& e) { RHSExpr r(t); r -= e
 inline RHSExpr operator*(double s, const RHSExpr& e) { return e * s; }
 
 // ---------------------------------------------------------------------------
-// Built-in differential operator factories (implemented in Equation.cu)
+// Built-in differential operator factories.
+//
+// Scalar lap/grad are implemented in operators/* and default to CD2 in this
+// version.  Composite-expression overloads remain in Equation.cu because they
+// depend on scratch-pool materialisation.
 // ---------------------------------------------------------------------------
 
 // coeff * nabla^2(f)   — 2nd-order central FD Laplacian summed over active axes

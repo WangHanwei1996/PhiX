@@ -124,120 +124,10 @@ __global__ void kernel_grad_accumulate(
 }
 
 // ===========================================================================
-// Built-in operator factories (return Term with launchers set up)
+// Scalar lap/grad base factories have moved to operators/* modules.
+// This file keeps expression-based overloads (lap(expr,...), grad(expr,...)),
+// isotropic operators, and Equation runtime logic.
 // ===========================================================================
-
-Term lap(const ScalarField& f, double coeff) {
-    Term t;
-    t.type  = TermType::LAPLACIAN;
-    t.field = &f;
-    t.coeff = coeff;
-
-    // Capture layout and mesh spacing at construction time
-    int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
-    int    sx = f.storedDims[0], sy = f.storedDims[1];
-    int    g  = f.ghost;
-    int    dim = f.mesh.dim;
-    double inv_dx2 = 1.0 / (f.mesh.d[0] * f.mesh.d[0]);
-    double inv_dy2 = (dim >= 2) ? 1.0 / (f.mesh.d[1] * f.mesh.d[1]) : 0.0;
-    double inv_dz2 = (dim >= 3) ? 1.0 / (f.mesh.d[2] * f.mesh.d[2]) : 0.0;
-
-    // Capture pointer-to-field so RK4's d_curr swap trick keeps working.
-    const ScalarField* pf = &f;
-
-    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                     (double* d_rhs, double c, ScratchPool&) {
-        const double* d_src = pf->d_curr;
-        if (!d_src)
-            throw std::runtime_error("lap GPU: source field not on device");
-        int total = nx * ny * nz;
-        kernel_lap_accumulate<<<(total + 255) / 256, 256>>>(
-            d_rhs, d_src, c,
-            nx, ny, nz, sx, sy,
-            g, dim, inv_dx2, inv_dy2, inv_dz2);
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess)
-            throw std::runtime_error(
-                std::string("lap GPU kernel error: ") + cudaGetErrorString(err));
-    };
-
-    t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* src = pf->curr.data();
-        for (int k = 0; k < nz; ++k)
-        for (int j = 0; j < ny; ++j)
-        for (int i = 0; i < nx; ++i) {
-            int is = i+g, js = j+g, ks = k+g;
-            int ctr = is + sx*(js + sy*ks);
-            double val =
-                (src[(is+1)+sx*(js+sy*ks)] - 2.0*src[ctr] + src[(is-1)+sx*(js+sy*ks)]) * inv_dx2;
-            if (dim >= 2)
-                val += (src[is+sx*((js+1)+sy*ks)] - 2.0*src[ctr] + src[is+sx*((js-1)+sy*ks)]) * inv_dy2;
-            if (dim >= 3)
-                val += (src[is+sx*(js+sy*(ks+1))] - 2.0*src[ctr] + src[is+sx*(js+sy*(ks-1))]) * inv_dz2;
-            rhs[ctr] += c * val;
-        }
-    };
-
-    return t;
-}
-
-Term grad(const ScalarField& f, int axis, double coeff) {
-    if (axis < 0 || axis >= f.mesh.dim)
-        throw std::invalid_argument("grad: axis out of range for this mesh dimension");
-
-    Term t;
-    t.type  = TermType::GRADIENT;
-    t.field = &f;
-    t.coeff = coeff;
-    t.axis  = axis;
-
-    int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
-    int    sx = f.storedDims[0], sy = f.storedDims[1];
-    int    g  = f.ghost;
-    double inv_2d = 0.5 / f.mesh.d[axis];
-
-    const ScalarField* pf = &f;
-
-    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, axis, inv_2d]
-                     (double* d_rhs, double c, ScratchPool&) {
-        const double* d_src = pf->d_curr;
-        if (!d_src)
-            throw std::runtime_error("grad GPU: source field not on device");
-        int total = nx * ny * nz;
-        kernel_grad_accumulate<<<(total + 255) / 256, 256>>>(
-            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_2d);
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess)
-            throw std::runtime_error(
-                std::string("grad GPU kernel error: ") + cudaGetErrorString(err));
-    };
-
-    t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, axis, inv_2d]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* src = pf->curr.data();
-        for (int k = 0; k < nz; ++k)
-        for (int j = 0; j < ny; ++j)
-        for (int i = 0; i < nx; ++i) {
-            int is = i+g, js = j+g, ks = k+g;
-            int ctr = is + sx*(js + sy*ks);
-            int fwd, bwd;
-            if (axis == 0) {
-                fwd = (is+1) + sx*(js + sy*ks);
-                bwd = (is-1) + sx*(js + sy*ks);
-            } else if (axis == 1) {
-                fwd = is + sx*((js+1) + sy*ks);
-                bwd = is + sx*((js-1) + sy*ks);
-            } else {
-                fwd = is + sx*(js + sy*(ks+1));
-                bwd = is + sx*(js + sy*(ks-1));
-            }
-            rhs[ctr] += c * (src[fwd] - src[bwd]) * inv_2d;
-        }
-    };
-
-    return t;
-}
 
 // ---------------------------------------------------------------------------
 // Isotropic 9-point gradient (Patra-Karttunen, 2D only):
@@ -508,10 +398,14 @@ Equation::Equation(ScalarField& unknown_, const std::string& name_)
 
 void Equation::setRHS(const RHSExpr& expr) {
     rhs_expr_ = expr;
+    requiredGhost_ = 0;
+    for (const auto& t : rhs_expr_.terms)
+        requiredGhost_ = std::max(requiredGhost_, t.ghostRequired);
 }
 
 void Equation::setRHS(const Term& t) {
     rhs_expr_ = RHSExpr(t);
+    requiredGhost_ = t.ghostRequired;
 }
 
 void Equation::computeRHS(ScalarField& rhs) const {

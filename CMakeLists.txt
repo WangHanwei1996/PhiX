@@ -48,6 +48,8 @@ add_library(phix STATIC
     src/field/FieldLayout.cpp
     src/field/ScalarField.cu
     src/field/VectorField.cu
+    src/operators/Laplacian.cu
+    src/operators/Gradient.cu
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp
     src/equation/Equation.cu

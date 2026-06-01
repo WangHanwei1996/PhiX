@@ -1,3 +1,5 @@
 add_subdirectory(mesh)
 add_subdirectory(boundary)
 add_subdirectory(field)
+add_subdirectory(scheme)
+add_subdirectory(operators)

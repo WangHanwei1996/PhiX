@@ -1,0 +1,4 @@
+add_executable(module_operators test_operators.cu)
+target_link_libraries(module_operators PRIVATE phix)
+set_target_properties(module_operators PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_operators COMMAND module_operators)

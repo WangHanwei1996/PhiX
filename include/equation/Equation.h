@@ -77,10 +77,12 @@ public:
     // Convenience: return true if RHS has been set
     // -----------------------------------------------------------------------
     bool hasRHS() const { return !rhs_expr_.terms.empty(); }
+    int  requiredGhost() const { return requiredGhost_; }
 
 private:
     RHSExpr               rhs_expr_;
     mutable ScratchPool   scratch_pool_;
+    int                   requiredGhost_ = 0;
 
     // Scratch field for advanceTransient (lazily allocated on first call).
     mutable std::unique_ptr<ScalarField> rhs_scratch_;
