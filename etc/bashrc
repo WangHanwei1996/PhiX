@@ -53,3 +53,16 @@ whw() {
 }
 
 echo "PhiX sourced: PHIX_DIR=$PHIX_DIR"
+
+# ---------------------------------------------------------------------------
+# makePhi — wrapper that calls the Python implementation then re-sources
+#           this file so new executables immediately enter PATH
+# ---------------------------------------------------------------------------
+makePhi() {
+    python3 "$PHIX_DIR/applications/tools/_makePhi" "$@"
+    local _exit=$?
+    # Re-source to pick up any newly compiled executables
+    # shellcheck source=/dev/null
+    source "$PHIX_DIR/etc/bashrc"
+    return $_exit
+}
