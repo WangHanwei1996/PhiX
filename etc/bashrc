@@ -6,8 +6,8 @@
 #
 # Sets:
 #   PHIX_DIR   — project root (auto-detected from this file's location)
-#   PATH       — all directories under $PHIX_DIR/applications/ that
-#                contain at least one executable are prepended
+#   PATH       — all directories anywhere under $PHIX_DIR (excluding build/)
+#                that contain at least one executable are prepended
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -17,11 +17,10 @@ export PHIX_DIR
 PHIX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---------------------------------------------------------------------------
-# Collect unique parent directories of executables under applications/
-# and prepend them to PATH (skip duplicates already in PATH)
+# Collect unique parent directories of executables anywhere in the project
+# (excluding build/) and prepend them to PATH.
 # ---------------------------------------------------------------------------
 _phix_setup_path() {
-    local apps_dir="$PHIX_DIR/applications"
     local added=""
 
     while IFS= read -r exe; do
@@ -34,7 +33,9 @@ _phix_setup_path() {
         esac
 
         added="${added:+${added}:}${dir}"
-    done < <(find "$apps_dir" -type f -executable 2>/dev/null | sort)
+    done < <(find "$PHIX_DIR" \
+                -path "$PHIX_DIR/build" -prune -o \
+                -type f -executable -print 2>/dev/null | sort)
 
     if [ -n "$added" ]; then
         export PATH="${added}:${PATH}"

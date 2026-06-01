@@ -174,7 +174,9 @@ def cmd_generate(cwd: Path) -> None:
         _err("make failed.")
 
     print(f"\n[makePhi] Done.  Executables written to:\n"
-          f"    {cwd}/")
+          f"    {cwd}/\n"
+          f"\n[makePhi] To use them by name from any directory:\n"
+          f"    source {root}/etc/bashrc")
 
 
 def cmd_clean(cwd: Path) -> None:
