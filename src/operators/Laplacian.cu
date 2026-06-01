@@ -1,4 +1,5 @@
 #include "operators/Laplacian.h"
+#include "scheme/Isotropic.h"
 
 #include <cuda_runtime.h>
 
@@ -43,13 +44,8 @@ __global__ void kernel_lap_accumulate(
     int ks = k + ghost;
 
     int c = is + sx * (js + sy * ks);
-    double val = Scheme::d2(src, c, 1, inv_dx2);
-
-    if (dim >= 2)
-        val += Scheme::d2(src, c, sx, inv_dy2);
-    if (dim >= 3)
-        val += Scheme::d2(src, c, sx * sy, inv_dz2);
-
+    double val = Scheme::laplacian(src, c, sx, sy, dim,
+                                   inv_dx2, inv_dy2, inv_dz2);
     rhs[c] += coeff * val;
 }
 
@@ -95,11 +91,8 @@ Term makeLaplacianTerm(const ScalarField& f, double coeff) {
         for (int i = 0; i < nx; ++i) {
             int is = i + g, js = j + g, ks = k + g;
             int ctr = is + sx * (js + sy * ks);
-            double val = Scheme::d2(src, ctr, 1, inv_dx2);
-            if (dim >= 2)
-                val += Scheme::d2(src, ctr, sx, inv_dy2);
-            if (dim >= 3)
-                val += Scheme::d2(src, ctr, sx * sy, inv_dz2);
+            double val = Scheme::laplacian(src, ctr, sx, sy, dim,
+                                           inv_dx2, inv_dy2, inv_dz2);
             rhs[ctr] += c * val;
         }
     };
@@ -115,9 +108,17 @@ Term lap(const ScalarField& f, double coeff) {
 }
 
 template Term lap<scheme::CD2>(const ScalarField&, double);
+template Term lap<scheme::Iso9>(const ScalarField&, double);
 
 Term lap(const ScalarField& f, double coeff) {
     return lap<scheme::CD2>(f, coeff);
+}
+
+Term lap(const ScalarField& f, const std::string& schemeName, double coeff) {
+    if (schemeName == "Iso9") return lap<scheme::Iso9>(f, coeff);
+    if (schemeName == "CD2" || schemeName.empty()) return lap<scheme::CD2>(f, coeff);
+    throw std::invalid_argument(
+        std::string("lap: unknown scheme '") + schemeName + "'. Supported: CD2, Iso9");
 }
 
 } // namespace PhiX

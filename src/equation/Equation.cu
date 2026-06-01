@@ -3,6 +3,8 @@
 #include "field/VectorField.h"
 #include "equation/Term.h"
 #include "boundary/BoundaryCondition.h"
+#include "operators/Gradient.h"
+#include "scheme/Isotropic.h"
 
 #include <cuda_runtime.h>
 #include <algorithm>
@@ -123,31 +125,15 @@ __global__ void kernel_grad_accumulate(
     rhs[c] += coeff * (src[fwd] - src[bwd]) * inv_2d;
 }
 
-// ===========================================================================
-// Scalar lap/grad base factories have moved to operators/* modules.
-// This file keeps expression-based overloads (lap(expr,...), grad(expr,...)),
-// isotropic operators, and Equation runtime logic.
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Isotropic 9-point gradient (Patra-Karttunen, 2D only):
-//   df/dx[i,j] ≈ [4(f[i+1,j]-f[i-1,j])
-//                + (f[i+1,j+1]-f[i-1,j+1])
-//                + (f[i+1,j-1]-f[i-1,j-1])] / (12*dx)
-//   df/dy[i,j] : symmetric in y
-// Reduces grid anisotropy of the standard 3-point central FD gradient
-// when later combined with a divergence (so div(grad) becomes a 9-point
-// isotropic Laplacian).  For 1D / 3D meshes falls back to standard
-// 3-point central FD on `axis`.
-// ---------------------------------------------------------------------------
-__global__ void kernel_iso_grad_accumulate(
+// Iso9 gradient kernel — used by iso_grad(Term/RHSExpr, ...) overload.
+__global__ void kernel_iso9_grad_accumulate(
         double*       rhs,
         const double* src,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
-        int ghost, int axis,
-        double inv_12d)   // 1 / (12 * d[axis])
+        int ghost, int dim, int axis,
+        double inv_dx, double inv_dy, double inv_dz)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nx * ny * nz) return;
@@ -161,100 +147,24 @@ __global__ void kernel_iso_grad_accumulate(
     int ks = k + ghost;
     int c  = is + sx * (js + sy * ks);
 
-    double val;
-    if (axis == 0) {
-        // 9-point isotropic d/dx (uses j-1, j, j+1 rows)
-        int xp_jm = (is+1) + sx*((js-1) + sy*ks);
-        int xp_j  = (is+1) + sx*( js    + sy*ks);
-        int xp_jp = (is+1) + sx*((js+1) + sy*ks);
-        int xm_jm = (is-1) + sx*((js-1) + sy*ks);
-        int xm_j  = (is-1) + sx*( js    + sy*ks);
-        int xm_jp = (is-1) + sx*((js+1) + sy*ks);
-        val = (4.0*(src[xp_j ] - src[xm_j ])
-                  + (src[xp_jp] - src[xm_jp])
-                  + (src[xp_jm] - src[xm_jm])) * inv_12d;
-    } else {
-        // axis == 1: 9-point isotropic d/dy
-        int xm_yp = (is-1) + sx*((js+1) + sy*ks);
-        int x_yp  =  is    + sx*((js+1) + sy*ks);
-        int xp_yp = (is+1) + sx*((js+1) + sy*ks);
-        int xm_ym = (is-1) + sx*((js-1) + sy*ks);
-        int x_ym  =  is    + sx*((js-1) + sy*ks);
-        int xp_ym = (is+1) + sx*((js-1) + sy*ks);
-        val = (4.0*(src[x_yp ] - src[x_ym ])
-                  + (src[xp_yp] - src[xp_ym])
-                  + (src[xm_yp] - src[xm_ym])) * inv_12d;
-    }
-
-    rhs[c] += coeff * val;
+    rhs[c] += coeff * scheme::Iso9::gradient(src, c, axis, sx, sy, dim,
+                                              inv_dx, inv_dy, inv_dz);
 }
 
-// 9-point isotropic gradient (2D only). For 1D meshes the second cross-row
-// is unavailable, so we silently fall back to the standard 3-point central
-// FD (kernel_grad_accumulate). For 3D the 9-point isotropic stencil is not
-// implemented, also fall back.
+// ===========================================================================
+// Scalar lap/grad base factories have moved to operators/* modules.
+// This file keeps expression-based overloads (lap(expr,...), grad(expr,...)),
+// isotropic operators, and Equation runtime logic.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// iso_grad — 9-point isotropic gradient
+// Delegates to grad<scheme::Iso9> (implemented in operators/Gradient.cu).
+// ---------------------------------------------------------------------------
 Term iso_grad(const ScalarField& f, int axis, double coeff) {
     if (axis < 0 || axis >= f.mesh.dim)
         throw std::invalid_argument("iso_grad: axis out of range for this mesh dimension");
-
-    // Fall back to 3-point central FD when isotropic 9-point stencil is
-    // not applicable (1D or 3D meshes, or if we need axis == 2).
-    if (f.mesh.dim != 2 || axis > 1)
-        return grad(f, axis, coeff);
-
-    Term t;
-    t.type  = TermType::GRADIENT;
-    t.field = &f;
-    t.coeff = coeff;
-    t.axis  = axis;
-
-    int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
-    int    sx = f.storedDims[0], sy = f.storedDims[1];
-    int    g  = f.ghost;
-    double inv_12d = 1.0 / (12.0 * f.mesh.d[axis]);
-
-    const ScalarField* pf = &f;
-
-    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, axis, inv_12d]
-                     (double* d_rhs, double c, ScratchPool&) {
-        const double* d_src = pf->d_curr;
-        if (!d_src)
-            throw std::runtime_error("iso_grad GPU: source field not on device");
-        int total = nx * ny * nz;
-        kernel_iso_grad_accumulate<<<(total + 255) / 256, 256>>>(
-            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_12d);
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess)
-            throw std::runtime_error(
-                std::string("iso_grad GPU kernel error: ") + cudaGetErrorString(err));
-    };
-
-    // CPU fallback (rarely used but kept for parity with grad)
-    t.cpu_kernel = [pf, sx, sy, g, axis, inv_12d, nx, ny, nz]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* src = pf->curr.data();
-        for (int k = 0; k < nz; ++k)
-        for (int j = 0; j < ny; ++j)
-        for (int i = 0; i < nx; ++i) {
-            int is = i+g, js = j+g, ks = k+g;
-            int ctr = is + sx*(js + sy*ks);
-            double val;
-            if (axis == 0) {
-                val = (4.0*(src[(is+1)+sx*( js   +sy*ks)] - src[(is-1)+sx*( js   +sy*ks)])
-                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js+1)+sy*ks)])
-                          + (src[(is+1)+sx*((js-1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
-                      * inv_12d;
-            } else {
-                val = (4.0*(src[ is   +sx*((js+1)+sy*ks)] - src[ is   +sx*((js-1)+sy*ks)])
-                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is+1)+sx*((js-1)+sy*ks)])
-                          + (src[(is-1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
-                      * inv_12d;
-            }
-            rhs[ctr] += c * val;
-        }
-    };
-
-    return t;
+    return grad<scheme::Iso9>(f, axis, coeff);
 }
 
 // ===========================================================================
@@ -916,39 +826,31 @@ static Term isoGradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     int    nx = layout.mesh.n[0], ny = layout.mesh.n[1], nz = layout.mesh.n[2];
     int    sx = layout.storedDims[0], sy = layout.storedDims[1];
     int    g  = layout.ghost;
-    double inv_12d = 1.0 / (12.0 * layout.mesh.d[axis]);
+    int    dim = layout.mesh.dim;
+    double inv_dx = 1.0 / layout.mesh.d[0];
+    double inv_dy = (dim >= 2) ? 1.0 / layout.mesh.d[1] : 0.0;
+    double inv_dz = (dim >= 3) ? 1.0 / layout.mesh.d[2] : 0.0;
 
-    auto gpu_op = [nx, ny, nz, sx, sy, g, axis, inv_12d]
+    auto gpu_op = [nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
                   (double* d_rhs, const double* d_src, double c) {
         int total = nx * ny * nz;
-        kernel_iso_grad_accumulate<<<(total + 255) / 256, 256>>>(
-            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_12d);
+        kernel_iso9_grad_accumulate<<<(total + 255) / 256, 256>>>(
+            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
             throw std::runtime_error(
                 std::string("iso_grad(expr) GPU error: ") + cudaGetErrorString(err));
     };
 
-    auto cpu_op = [nx, ny, nz, sx, sy, g, axis, inv_12d]
+    auto cpu_op = [nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
                   (double* rhs, const double* src, double c) {
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
             int is = i+g, js = j+g, ks = k+g;
             int ctr = is + sx*(js + sy*ks);
-            double val;
-            if (axis == 0) {
-                val = (4.0*(src[(is+1)+sx*( js   +sy*ks)] - src[(is-1)+sx*( js   +sy*ks)])
-                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js+1)+sy*ks)])
-                          + (src[(is+1)+sx*((js-1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
-                      * inv_12d;
-            } else {
-                val = (4.0*(src[ is   +sx*((js+1)+sy*ks)] - src[ is   +sx*((js-1)+sy*ks)])
-                          + (src[(is+1)+sx*((js+1)+sy*ks)] - src[(is+1)+sx*((js-1)+sy*ks)])
-                          + (src[(is-1)+sx*((js+1)+sy*ks)] - src[(is-1)+sx*((js-1)+sy*ks)]))
-                      * inv_12d;
-            }
-            rhs[ctr] += c * val;
+            rhs[ctr] += c * scheme::Iso9::gradient(src, ctr, axis, sx, sy, dim,
+                                                    inv_dx, inv_dy, inv_dz);
         }
     };
 

@@ -1,4 +1,5 @@
 #include "operators/Gradient.h"
+#include "scheme/Isotropic.h"
 
 #include <cuda_runtime.h>
 
@@ -26,8 +27,8 @@ __global__ void kernel_grad_accumulate(
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
-        int ghost, int axis,
-        double inv_d)
+        int ghost, int dim, int axis,
+        double inv_dx, double inv_dy, double inv_dz)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nx * ny * nz) return;
@@ -41,8 +42,8 @@ __global__ void kernel_grad_accumulate(
     int ks = k + ghost;
     int c  = is + sx * (js + sy * ks);
 
-    int stride = (axis == 0) ? 1 : (axis == 1) ? sx : sx * sy;
-    rhs[c] += coeff * Scheme::d1(src, c, stride, inv_d);
+    rhs[c] += coeff * Scheme::gradient(src, c, axis, sx, sy, dim,
+                                        inv_dx, inv_dy, inv_dz);
 }
 
 template<typename Scheme>
@@ -60,34 +61,37 @@ Term makeGradientTerm(const ScalarField& f, int axis, double coeff) {
     int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
     int    sx = f.storedDims[0], sy = f.storedDims[1];
     int    g  = f.ghost;
-    double inv_d = 1.0 / f.mesh.d[axis];
+    int    dim = f.mesh.dim;
+    double inv_dx = 1.0 / f.mesh.d[0];
+    double inv_dy = (dim >= 2) ? 1.0 / f.mesh.d[1] : 0.0;
+    double inv_dz = (dim >= 3) ? 1.0 / f.mesh.d[2] : 0.0;
 
     const ScalarField* pf = &f;
 
-    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, axis, inv_d]
+    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
                      (double* d_rhs, double c, ScratchPool&) {
         const double* d_src = pf->d_curr;
         if (!d_src)
             throw std::runtime_error("grad GPU: source field not on device");
         int total = nx * ny * nz;
         kernel_grad_accumulate<Scheme><<<(total + 255) / 256, 256>>>(
-            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_d);
+            d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
             throw std::runtime_error(
                 std::string("grad GPU kernel error: ") + cudaGetErrorString(err));
     };
 
-    t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, axis, inv_d]
+    t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
                    (double* rhs, double c, ScratchPool&) {
         const double* src = pf->curr.data();
-        int stride = (axis == 0) ? 1 : (axis == 1) ? sx : sx * sy;
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
             int is = i + g, js = j + g, ks = k + g;
             int ctr = is + sx * (js + sy * ks);
-            rhs[ctr] += c * Scheme::d1(src, ctr, stride, inv_d);
+            rhs[ctr] += c * Scheme::gradient(src, ctr, axis, sx, sy, dim,
+                                              inv_dx, inv_dy, inv_dz);
         }
     };
 
@@ -102,9 +106,17 @@ Term grad(const ScalarField& f, int axis, double coeff) {
 }
 
 template Term grad<scheme::CD2>(const ScalarField&, int, double);
+template Term grad<scheme::Iso9>(const ScalarField&, int, double);
 
 Term grad(const ScalarField& f, int axis, double coeff) {
     return grad<scheme::CD2>(f, axis, coeff);
+}
+
+Term grad(const ScalarField& f, int axis, const std::string& schemeName, double coeff) {
+    if (schemeName == "Iso9") return grad<scheme::Iso9>(f, axis, coeff);
+    if (schemeName == "CD2" || schemeName.empty()) return grad<scheme::CD2>(f, axis, coeff);
+    throw std::invalid_argument(
+        std::string("grad: unknown scheme '") + schemeName + "'. Supported: CD2, Iso9");
 }
 
 } // namespace PhiX
