@@ -51,6 +51,7 @@ add_library(phix STATIC
     src/field/FaceField.cu
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
+    src/operators/FaceOps.cu
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp
     src/equation/Equation.cu
