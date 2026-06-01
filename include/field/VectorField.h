@@ -1,5 +1,6 @@
 #pragma once
 
+#include "field/FieldLayout.h"
 #include "field/ScalarField.h"
 #include "mesh/Mesh.h"
 
@@ -41,6 +42,10 @@ public:
                          int nComponents,
                          int ghost = 1);
 
+    explicit VectorField(const FieldLayout& layout,
+                         const std::string& name,
+                         int nComponents);
+
     // Non-copyable (each component ScalarField owns GPU memory)
     VectorField(const VectorField&)            = delete;
     VectorField& operator=(const VectorField&) = delete;
@@ -70,6 +75,7 @@ public:
     // -----------------------------------------------------------------------
     // Metadata
     // -----------------------------------------------------------------------
+    FieldLayout  layout;
     const Mesh&  mesh;    // shared mesh (from first component)
     int          ghost;   // ghost layers
     std::string  name;    // base name (components are name_x/y/z or name_0...)

@@ -34,8 +34,15 @@ VectorField::VectorField(const Mesh& mesh_,
                           const std::string& name_,
                           int nComponents,
                           int ghost_)
-    : mesh(mesh_)
-    , ghost(ghost_)
+    : VectorField(FieldLayout(mesh_, ghost_), name_, nComponents)
+{}
+
+VectorField::VectorField(const FieldLayout& layout_,
+                          const std::string& name_,
+                          int nComponents)
+    : layout(layout_)
+    , mesh(layout.meshRef())
+    , ghost(layout.ghost)
     , name(name_)
 {
     if (nComponents <= 0)
@@ -43,7 +50,7 @@ VectorField::VectorField(const Mesh& mesh_,
 
     components_.reserve(nComponents);
     for (int c = 0; c < nComponents; ++c) {
-        components_.emplace_back(mesh_, makeComponentName(name_, c, nComponents), ghost_);
+        components_.emplace_back(layout, makeComponentName(name_, c, nComponents));
     }
 }
 
@@ -52,7 +59,8 @@ VectorField::VectorField(const Mesh& mesh_,
 // ---------------------------------------------------------------------------
 
 VectorField::VectorField(VectorField&& other) noexcept
-    : mesh(other.mesh)
+    : layout(other.layout)
+    , mesh(other.mesh)
     , ghost(other.ghost)
     , name(std::move(other.name))
     , components_(std::move(other.components_))
@@ -61,6 +69,7 @@ VectorField::VectorField(VectorField&& other) noexcept
 VectorField& VectorField::operator=(VectorField&& other) noexcept {
     if (this == &other) return *this;
     // mesh is const ref — cannot rebind; caller must ensure same mesh lifetime
+    layout     = other.layout;
     ghost      = other.ghost;
     name       = std::move(other.name);
     components_ = std::move(other.components_);

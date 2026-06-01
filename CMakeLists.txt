@@ -45,6 +45,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 add_library(phix STATIC
     src/mesh/Patch.cpp
     src/mesh/Mesh.cpp
+    src/field/FieldLayout.cpp
     src/field/ScalarField.cu
     src/field/VectorField.cu
     src/boundary/Boundary.cu

@@ -25,29 +25,23 @@ namespace PhiX {
     } while (0)
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-static std::size_t computeStoredSize(const int storedDims[3]) {
-    return static_cast<std::size_t>(storedDims[0])
-         * storedDims[1]
-         * storedDims[2];
-}
-
-// ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
 
 ScalarField::ScalarField(const Mesh& mesh_, const std::string& name_, int ghost_)
-    : name(name_), mesh(mesh_), ghost(ghost_)
+    : ScalarField(FieldLayout(mesh_, ghost_), name_)
+{}
+
+ScalarField::ScalarField(const FieldLayout& layout_, const std::string& name_)
+    : name(name_)
+    , layout(layout_)
+    , mesh(layout.meshRef())
+    , ghost(layout.ghost)
+    , storedSize(layout.storedSize)
 {
-    if (ghost_ < 0)
-        throw std::invalid_argument("ScalarField: ghost must be >= 0");
-
-    for (int ax = 0; ax < 3; ++ax)
-        storedDims[ax] = mesh.n[ax] + 2 * ghost;
-
-    storedSize = computeStoredSize(storedDims);
+    storedDims[0] = layout.storedDims[0];
+    storedDims[1] = layout.storedDims[1];
+    storedDims[2] = layout.storedDims[2];
 
     curr.assign(storedSize, 0.0);
     prev.assign(storedSize, 0.0);
@@ -61,7 +55,7 @@ ScalarField ScalarField::makeShell(const Mesh& mesh_, int ghost_,
                                    double* d_buf,
                                    const std::string& name_)
 {
-    ScalarField f(mesh_, name_, ghost_);
+    ScalarField f(FieldLayout(mesh_, ghost_), name_);
     // Drop CPU buffers — a shell only exposes device data.
     f.curr.clear(); f.curr.shrink_to_fit();
     f.prev.clear(); f.prev.shrink_to_fit();
@@ -77,6 +71,7 @@ ScalarField ScalarField::makeShell(const Mesh& mesh_, int ghost_,
 
 ScalarField::ScalarField(ScalarField&& other) noexcept
     : name(std::move(other.name))
+    , layout(other.layout)
     , mesh(other.mesh)
     , ghost(other.ghost)
     , storedSize(other.storedSize)
@@ -99,6 +94,7 @@ ScalarField& ScalarField::operator=(ScalarField&& other) noexcept {
     freeDevice();
 
     name      = std::move(other.name);
+    layout    = other.layout;
     // mesh is a const ref — cannot rebind, caller is responsible for lifetime
     ghost     = other.ghost;
     storedDims[0] = other.storedDims[0];
@@ -238,9 +234,7 @@ ScalarField ScalarField::readFromFile(const Mesh& mesh,
 // IO helper for print(): physical (i,j,k) -> stored flat index
 // ---------------------------------------------------------------------------
 static inline int physIdx(const ScalarField& f, int i, int j, int k) {
-    return (i + f.ghost)
-         + f.storedDims[0] * ((j + f.ghost)
-         + f.storedDims[1] *  (k + f.ghost));
+    return f.layout.index(i, j, k);
 }
 
 // ---------------------------------------------------------------------------

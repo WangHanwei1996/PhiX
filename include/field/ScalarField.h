@@ -1,5 +1,6 @@
 #pragma once
 
+#include "field/FieldLayout.h"
 #include "mesh/Mesh.h"
 #include "IO/FieldFormat.h"
 
@@ -33,6 +34,7 @@ public:
     // Identity
     // -----------------------------------------------------------------------
     std::string name;
+    FieldLayout layout;
 
     // -----------------------------------------------------------------------
     // Geometry (cached from Mesh at construction)
@@ -61,6 +63,9 @@ public:
                          const std::string& name,
                          int ghost = 1);
 
+    explicit ScalarField(const FieldLayout& layout,
+                         const std::string& name);
+
     // -----------------------------------------------------------------------
     // Shell factory — build a non-owning ScalarField wrapping an externally
     // managed device buffer (e.g. one obtained from ScratchPool::acquire).
@@ -88,9 +93,7 @@ public:
     // Inline index mapping  (physical OR ghost indices accepted)
     // -----------------------------------------------------------------------
     inline int index(int i, int j, int k) const {
-        return (i + ghost)
-             + storedDims[0] * ((j + ghost)
-             + storedDims[1] *  (k + ghost));
+        return layout.index(i, j, k);
     }
     inline int index(int i, int j) const { return index(i, j, 0); }
     inline int index(int i)        const { return index(i, 0, 0); }
