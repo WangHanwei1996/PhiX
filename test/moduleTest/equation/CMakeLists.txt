@@ -21,3 +21,8 @@ add_executable(module_fused test_fused.cu)
 target_link_libraries(module_fused PRIVATE phix)
 set_target_properties(module_fused PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_fused COMMAND module_fused)
+
+add_executable(module_vector_equation test_vector_equation.cu)
+target_link_libraries(module_vector_equation PRIVATE phix)
+set_target_properties(module_vector_equation PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_vector_equation COMMAND module_vector_equation)

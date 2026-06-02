@@ -3,7 +3,9 @@
 #include "equation/Equation.h"
 #include "equation/Term.h"
 #include "field/VectorField.h"
+#include "boundary/BoundaryCondition.h"
 
+#include <cuda_runtime.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -44,14 +46,36 @@ public:
     // -----------------------------------------------------------------------
     void setRHS(const VectorRHSExpr& expr);
 
+    // Per-component ExprTree path (Stage 2+ DSL).
+    void setRHSComponent(int c, const ExprTree& tree);
+
     // -----------------------------------------------------------------------
-    // Evaluate RHS into rhs on GPU (each component's d_curr must be allocated
-    // and rhs must have matching layout).
+    // Stream propagation (Stage 4)
+    // Sets the CUDA stream used for all component equations' GPU launches.
+    // Default stream_ = nullptr (CUDA default stream, in-order).
+    // -----------------------------------------------------------------------
+    void setStream(cudaStream_t s);
+    cudaStream_t stream() const;
+
+    // -----------------------------------------------------------------------
+    // BC auto-injection (Stage 3)
+    // Registers BCs for a scalar field in all component equations.
+    // -----------------------------------------------------------------------
+    void registerBC(const ScalarField& field,
+                    std::vector<BoundaryCondition*> bcs);
+
+    // -----------------------------------------------------------------------
+    // Evaluate RHS into rhs on GPU.
     // -----------------------------------------------------------------------
     void computeRHS(VectorField& rhs) const;
 
     // CPU fallback
     void computeRHSCPU(VectorField& rhs) const;
+
+    // -----------------------------------------------------------------------
+    // One explicit forward-Euler time step (mirrors Equation::advanceTransient).
+    // -----------------------------------------------------------------------
+    void advanceTransient(const std::vector<BoundaryCondition*>& bcs, double dt);
 
     // -----------------------------------------------------------------------
     // Access individual component equations (for advanced use)
