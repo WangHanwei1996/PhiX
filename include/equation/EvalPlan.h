@@ -20,20 +20,36 @@
 //   each step's launcher is called sequentially, accumulating into rhs.d_curr.
 //   Actual kernel fusion is deferred to Stage 5 (Strategy B).
 //
+// Stage 3 (this release):
+//   lowerExprTree gains a BcMap parameter.  When an ExprStencil wraps a
+//   composite child (not a plain ExprLeaf), the lowering pass looks up the
+//   BCs for the child's representative field in BcMap and invokes
+//   lap/grad/iso_grad(RHSExpr, bcs, coeff) from the existing Term API.
+//   Equation gains registerBC() and bcMap_ so setRHS(ExprTree) can pass the
+//   map automatically.
+//
 // Future stages:
-//   Stage 3: lowerExprTree gains a BcMap parameter so STENCIL steps on
-//            materialized expressions can auto-inject BCs.
 //   Stage 4: EvalPlan holds a cudaStream_t; execute() drops DeviceSynchronize.
 //   Stage 5: LOCAL steps are fused into single templated kernels (Strategy B).
 // ---------------------------------------------------------------------------
 
 #include "equation/Term.h"
 #include "equation/Expr.h"
+#include "boundary/BoundaryCondition.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace PhiX {
+
+// ===========================================================================
+// BcMap — maps a source ScalarField to the BCs applied to it.
+// Passed to lowerExprTree so that composite stencil expressions can have
+// BCs applied to their materialised scratch buffer automatically.
+// ===========================================================================
+using BcMap = std::unordered_map<const ScalarField*,
+                                  std::vector<BoundaryCondition*>>;
 
 // ===========================================================================
 // EvalStep — one unit of work in the plan
@@ -84,22 +100,20 @@ public:
 };
 
 // ===========================================================================
-// lowerExprTree — convert an ExprTree into an EvalPlan
+// lowerExprTree — convert an ExprTree into an EvalPlan.
 //
-// Walks the tree recursively and produces an ordered list of EvalSteps backed
-// by the existing Term-launcher infrastructure.
-//
-// Restrictions (lifted in later stages):
-//   • ExprStencil nodes whose child is NOT a plain ExprLeaf require BC
-//     injection (Stage 3). For now they throw std::logic_error with a
-//     message directing the user to use lap(expr, bcs) from the Term API.
-//   • ExprScalar (bare constant) nodes without a companion field in the same
-//     subtree throw std::logic_error (constant-only RHS is nonsensical).
+// Two overloads:
+//   (1) Without BcMap — composite stencil children throw std::logic_error.
+//   (2) With BcMap   — composite stencil children resolve BCs automatically
+//       from the map; missing entries cause std::logic_error only if the
+//       child is genuinely composite (pure-leaf children never need BCs).
 //
 // Preconditions:
-//   • validateGhostRequirements(tree) must have been called before lowering.
-//     lowerExprTree calls it internally; callers need not call it separately.
+//   • validateGhostRequirements(tree) is called internally; callers need not
+//     call it separately.
 // ===========================================================================
 EvalPlan lowerExprTree(const ExprTree& tree);
+EvalPlan lowerExprTree(const ExprTree& tree, const BcMap& bc_map);
 
 } // namespace PhiX
+

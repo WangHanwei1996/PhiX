@@ -328,10 +328,15 @@ void Equation::setRHS(const Term& t) {
 }
 
 void Equation::setRHS(const ExprTree& tree) {
-    eval_plan_ = std::make_unique<EvalPlan>(lowerExprTree(tree));
+    eval_plan_ = std::make_unique<EvalPlan>(lowerExprTree(tree, bc_map_));
     requiredGhost_ = tree.ghostRequired();
     // Keep rhs_expr_ empty so hasRHS() reflects the plan correctly.
     rhs_expr_ = RHSExpr();
+}
+
+void Equation::registerBC(const ScalarField& field,
+                           std::vector<BoundaryCondition*> bcs) {
+    bc_map_[&field] = std::move(bcs);
 }
 
 void Equation::computeRHS(ScalarField& rhs) const {

@@ -7,9 +7,11 @@
 #include "equation/EvalPlan.h"
 #include "equation/TermPW.inl"   // pw<Functor>() template definitions
 #include "equation/FieldOps.inl" // detail::termTimesTerm / termTimesField
+#include "boundary/BoundaryCondition.h"
 
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace PhiX {
@@ -57,30 +59,43 @@ static EvalStep stepFromTerm(Term t) {
 }
 
 // Forward declarations of the two recursive helpers.
-static void     lowerToSteps  (const ExprNode*, double coeff,
-                                const ScalarField* layout,
-                                std::vector<EvalStep>& out);
-static RHSExpr  lowerToRHSExpr(const ExprNode*, double coeff,
-                                const ScalarField* layout);
+static void    lowerToSteps  (const ExprNode*, double coeff,
+                               const ScalarField* layout,
+                               const BcMap& bc_map,
+                               std::vector<EvalStep>& out);
+static RHSExpr lowerToRHSExpr(const ExprNode*, double coeff,
+                               const ScalarField* layout,
+                               const BcMap& bc_map);
+
+// Lookup BCs for a representative field; returns empty vector if not found.
+static std::vector<BoundaryCondition*>
+lookupBcs(const ScalarField* rep, const BcMap& bc_map)
+{
+    if (!rep) return {};
+    auto it = bc_map.find(rep);
+    if (it == bc_map.end()) return {};
+    return it->second;
+}
 
 // ---------------------------------------------------------------------------
 // lowerToRHSExpr — lower a subtree to an RHSExpr (multiple Terms).
 // Used when a subtree appears as an operand inside ExprMul.
 // ---------------------------------------------------------------------------
 static RHSExpr lowerToRHSExpr(const ExprNode* n, double coeff,
-                               const ScalarField* layout)
+                               const ScalarField* layout,
+                               const BcMap& bc_map)
 {
     // ExprAdd flattens directly.
     if (auto* add = dynamic_cast<const ExprAdd*>(n)) {
         RHSExpr out;
-        out += lowerToRHSExpr(add->left.get(),  coeff, layout);
-        out += lowerToRHSExpr(add->right.get(), coeff, layout);
+        out += lowerToRHSExpr(add->left.get(),  coeff, layout, bc_map);
+        out += lowerToRHSExpr(add->right.get(), coeff, layout, bc_map);
         return out;
     }
 
     // All other nodes: lower to EvalSteps, then pack into Terms.
     std::vector<EvalStep> sub_steps;
-    lowerToSteps(n, coeff, layout, sub_steps);
+    lowerToSteps(n, coeff, layout, bc_map, sub_steps);
 
     RHSExpr out;
     for (auto& s : sub_steps) {
@@ -102,38 +117,37 @@ static RHSExpr lowerToRHSExpr(const ExprNode* n, double coeff,
 // `coeff` is the accumulated outer coefficient.
 // `layout` is the representative ScalarField for mesh/ghost queries (may be
 // nullptr; caller must guarantee it is set for nodes that need it).
+// `bc_map` provides BCs for composite stencil expressions (Stage 3).
 // ---------------------------------------------------------------------------
 static void lowerToSteps(const ExprNode* n, double coeff,
                          const ScalarField* layout,
+                         const BcMap& bc_map,
                          std::vector<EvalStep>& out)
 {
     if (!n) return;
 
     // ── ExprScale ────────────────────────────────────────────────────────────
     if (auto* sc = dynamic_cast<const ExprScale*>(n)) {
-        // Update layout if the child provides one.
         const ScalarField* child_lay = sc->child->repField();
         lowerToSteps(sc->child.get(), coeff * sc->coeff,
-                     child_lay ? child_lay : layout, out);
+                     child_lay ? child_lay : layout, bc_map, out);
         return;
     }
 
     // ── ExprNeg ──────────────────────────────────────────────────────────────
     if (auto* neg = dynamic_cast<const ExprNeg*>(n)) {
-        lowerToSteps(neg->child.get(), -coeff, layout, out);
+        lowerToSteps(neg->child.get(), -coeff, layout, bc_map, out);
         return;
     }
 
     // ── ExprAdd ──────────────────────────────────────────────────────────────
     if (auto* add = dynamic_cast<const ExprAdd*>(n)) {
-        lowerToSteps(add->left.get(),  coeff, layout, out);
-        lowerToSteps(add->right.get(), coeff, layout, out);
+        lowerToSteps(add->left.get(),  coeff, layout, bc_map, out);
+        lowerToSteps(add->right.get(), coeff, layout, bc_map, out);
         return;
     }
 
     // ── ExprLeaf ─────────────────────────────────────────────────────────────
-    // Produce: rhs[idx] += coeff * f[idx]
-    // Implemented as pw(f, identity, coeff).
     if (auto* leaf = dynamic_cast<const ExprLeaf*>(n)) {
         Term t = pw(*leaf->field,
                     [] __host__ __device__ (double v) { return v; },
@@ -143,8 +157,6 @@ static void lowerToSteps(const ExprNode* n, double coeff,
     }
 
     // ── ExprScalar ───────────────────────────────────────────────────────────
-    // Produce: rhs[idx] += coeff * value   (constant added to every cell)
-    // Requires a layout field for mesh dimensions.
     if (auto* cst = dynamic_cast<const ExprScalar*>(n)) {
         if (!layout)
             throw std::logic_error(
@@ -158,16 +170,14 @@ static void lowerToSteps(const ExprNode* n, double coeff,
     }
 
     // ── ExprMul ──────────────────────────────────────────────────────────────
-    // Hadamard product: left * right.
-    // Lowers each operand to an RHSExpr, then combines via termTimesTerm.
     if (auto* mul_n = dynamic_cast<const ExprMul*>(n)) {
         const ScalarField* lay = mul_n->repField();
         if (!lay) lay = layout;
         if (!lay)
             throw std::logic_error("lowerExprTree: ExprMul has no layout field");
 
-        RHSExpr left_expr  = lowerToRHSExpr(mul_n->left.get(),  1.0, lay);
-        RHSExpr right_expr = lowerToRHSExpr(mul_n->right.get(), 1.0, lay);
+        RHSExpr left_expr  = lowerToRHSExpr(mul_n->left.get(),  1.0, lay, bc_map);
+        RHSExpr right_expr = lowerToRHSExpr(mul_n->right.get(), 1.0, lay, bc_map);
 
         Term mul_term = detail::termTimesTerm(left_expr, right_expr, *lay, coeff);
         out.push_back(stepFromTerm(std::move(mul_term)));
@@ -175,11 +185,8 @@ static void lowerToSteps(const ExprNode* n, double coeff,
     }
 
     // ── ExprStencil ──────────────────────────────────────────────────────────
-    // Stencil applied to a child sub-expression.
-    // Stage 2: only plain ExprLeaf children are supported (no BC injection yet).
     if (auto* st = dynamic_cast<const ExprStencil*>(n)) {
-        // Peel off any Scale/Neg wrappers around the child to extract the leaf
-        // and accumulate any extra coefficient they carry.
+        // Peel Scale/Neg wrappers to get the effective child and coefficient.
         double leaf_coeff = coeff;
         const ExprNode* child = st->child.get();
 
@@ -196,6 +203,7 @@ static void lowerToSteps(const ExprNode* n, double coeff,
         }
 
         if (auto* leaf = dynamic_cast<const ExprLeaf*>(child)) {
+            // Simple leaf case — no BC materialisation needed.
             Term t;
             switch (st->kind) {
             case StencilKind::LAP:
@@ -215,21 +223,63 @@ static void lowerToSteps(const ExprNode* n, double coeff,
             return;
         }
 
-        // Complex child → BC injection needed (Stage 3).
-        throw std::logic_error(
-            "lowerExprTree: ExprStencil applied to a composite child expression "
-            "requires BC auto-injection (Stage 3). "
-            "Use lap(expr, bcs) / grad(expr, axis, bcs) from the Term API instead.");
+        // ── Composite child: requires BC injection (Stage 3) ────────────────
+        // Lower the full (un-peeled) child to an RHSExpr.
+        // leaf_coeff already accounts for Scale/Neg peeling, and the
+        // child pointer still points to the inner node after peeling.
+        // But we need to lower the original st->child (including the peeled
+        // Scale/Neg) and let leaf_coeff absorb only the wrapper coefficients.
+        //
+        // Simpler: lower the original child with coeff=1.0 and fold
+        // leaf_coeff into the outer stencil coeff.
+        const ScalarField* rep = st->child->repField();
+        auto bcs = lookupBcs(rep, bc_map);
+
+        if (bcs.empty() && !bc_map.empty()) {
+            // No BCs registered for this field — warn via logic_error.
+            throw std::logic_error(
+                "lowerExprTree: ExprStencil on composite expression requires BCs "
+                "but none were found in the BcMap for the representative field. "
+                "Call Equation::registerBC() before setRHS().");
+        }
+        if (bcs.empty()) {
+            // No bc_map provided at all — use Stage 2 error.
+            throw std::logic_error(
+                "lowerExprTree: ExprStencil applied to a composite child "
+                "expression requires BC auto-injection. "
+                "Pass a BcMap to lowerExprTree, or use "
+                "lap(expr, bcs) / grad(expr, axis, bcs) from the Term API.");
+        }
+
+        // Lower the original child sub-tree to an RHSExpr (coeff=1 here;
+        // leaf_coeff is applied through the stencil call).
+        RHSExpr child_expr = lowerToRHSExpr(st->child.get(), 1.0, rep, bc_map);
+
+        Term t;
+        switch (st->kind) {
+        case StencilKind::LAP:
+            t = lap(child_expr, bcs, leaf_coeff);
+            break;
+        case StencilKind::GRAD:
+            t = grad(child_expr, st->axis, bcs, leaf_coeff);
+            break;
+        case StencilKind::ISO_GRAD:
+            t = iso_grad(child_expr, st->axis, bcs, leaf_coeff);
+            break;
+        default:
+            throw std::logic_error(
+                "lowerExprTree: unsupported StencilKind for composite child");
+        }
+        out.push_back(stepFromTerm(std::move(t)));
+        return;
     }
 
     // ── ExprStencilBinary ────────────────────────────────────────────────────
-    // GRAD_DOT: ∇f · ∇g.  Both children must be plain leaves.
     if (auto* sb = dynamic_cast<const ExprStencilBinary*>(n)) {
         if (sb->kind != StencilKind::GRAD_DOT)
             throw std::logic_error(
                 "lowerExprTree: unsupported ExprStencilBinary kind");
 
-        // Peel Scale/Neg wrappers.
         double leaf_coeff = coeff;
         const ExprNode* l_node = sb->left.get();
         const ExprNode* r_node = sb->right.get();
@@ -259,7 +309,7 @@ static void lowerToSteps(const ExprNode* n, double coeff,
         if (!lf || !rf)
             throw std::logic_error(
                 "lowerExprTree: GRAD_DOT requires both children to be plain "
-                "ScalarField leaves (Stage 3 will lift this restriction)");
+                "ScalarField leaves (Stage 3+ will lift this restriction)");
 
         Term t = grad_dot(*lf->field, *rf->field, leaf_coeff);
         out.push_back(stepFromTerm(std::move(t)));
@@ -267,7 +317,6 @@ static void lowerToSteps(const ExprNode* n, double coeff,
     }
 
     // ── ExprPointwise1 ───────────────────────────────────────────────────────
-    // Not yet implemented in any factory (Stage 2 scope: stencil + leaf ops).
     if (dynamic_cast<const ExprPointwise1*>(n)) {
         throw std::logic_error(
             "lowerExprTree: ExprPointwise1 lowering is not yet implemented. "
@@ -279,9 +328,14 @@ static void lowerToSteps(const ExprNode* n, double coeff,
 }
 
 // ===========================================================================
-// lowerExprTree — public entry point
+// lowerExprTree — public entry points
 // ===========================================================================
 EvalPlan lowerExprTree(const ExprTree& tree) {
+    static const BcMap empty_map;
+    return lowerExprTree(tree, empty_map);
+}
+
+EvalPlan lowerExprTree(const ExprTree& tree, const BcMap& bc_map) {
     validateGhostRequirements(tree);
 
     if (!tree.node)
@@ -290,7 +344,7 @@ EvalPlan lowerExprTree(const ExprTree& tree) {
     const ScalarField* layout = tree.repField();
 
     EvalPlan plan;
-    lowerToSteps(tree.node.get(), 1.0, layout, plan.steps);
+    lowerToSteps(tree.node.get(), 1.0, layout, bc_map, plan.steps);
     return plan;
 }
 

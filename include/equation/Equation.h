@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace PhiX {
@@ -13,6 +14,7 @@ namespace PhiX {
 //   Equation.h  includes  EvalPlan.h  ← break this cycle by using fwd decls
 struct ExprTree;
 class  EvalPlan;
+class  BoundaryCondition;
 }
 
 namespace PhiX {
@@ -50,8 +52,24 @@ public:
     // Set the RHS expression.  Can be called again to update mid-simulation.
     // -----------------------------------------------------------------------
     void setRHS(const RHSExpr& expr);
-    void setRHS(const Term& t);      // convenience: single-term RHS
-    void setRHS(const ExprTree& tree); // new ExprTree API (Stage 2)
+    void setRHS(const Term& t);        // convenience: single-term RHS
+    void setRHS(const ExprTree& tree); // ExprTree API (Stage 2+)
+
+    // -----------------------------------------------------------------------
+    // BC registration for ExprTree auto-injection (Stage 3).
+    //
+    // Associates a set of BCs with a ScalarField so that when setRHS(ExprTree)
+    // encounters a composite ExprStencil node whose child references `field`,
+    // the materialised scratch buffer gets the correct BCs applied
+    // automatically (without the user calling lap(expr, bcs) explicitly).
+    //
+    // Example:
+    //   eq.registerBC(mu, {&bc_periodic_x, &bc_periodic_y});
+    //   ExprTree mu_expr = expr_lap(mu) + expr_pw(mu, [](double m){ return m*m; });
+    //   eq.setRHS(expr_lap(mu_expr));  // auto-injects mu's BCs
+    // -----------------------------------------------------------------------
+    void registerBC(const ScalarField& field,
+                    std::vector<BoundaryCondition*> bcs);
 
     // -----------------------------------------------------------------------
     // Evaluate RHS into rhs.d_curr on GPU.
@@ -97,6 +115,9 @@ private:
     RHSExpr               rhs_expr_;
     mutable ScratchPool   scratch_pool_;
     int                   requiredGhost_ = 0;
+
+    // BC map for ExprTree auto-injection (Stage 3).
+    std::unordered_map<const ScalarField*, std::vector<BoundaryCondition*>> bc_map_;
 
     // EvalPlan — set when equation is configured via setRHS(ExprTree).
     std::unique_ptr<EvalPlan> eval_plan_;

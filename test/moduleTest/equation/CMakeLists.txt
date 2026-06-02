@@ -6,3 +6,8 @@ add_executable(module_evalplan test_evalplan.cu)
 target_link_libraries(module_evalplan PRIVATE phix)
 set_target_properties(module_evalplan PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_evalplan COMMAND module_evalplan)
+
+add_executable(module_bc_injection test_bc_injection.cu)
+target_link_libraries(module_bc_injection PRIVATE phix)
+set_target_properties(module_bc_injection PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_bc_injection COMMAND module_bc_injection)
