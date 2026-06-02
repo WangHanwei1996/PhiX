@@ -55,6 +55,7 @@ add_library(phix STATIC
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp
     src/equation/Equation.cu
+    src/equation/Expr.cu
     src/equation/VectorEquation.cu
     src/solver/Solver.cu
     src/solver/VectorSolver.cu
@@ -91,7 +92,6 @@ add_subdirectory(test/sampleTest)
 # ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
-add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 # add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 # add_subdirectory("applications/solvers/glass_formation/2D")
 # add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
@@ -101,3 +101,4 @@ add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 # add_subdirectory("develop/Ostwald_Ripening")
 # add_subdirectory("develop/fieldOperation")
 # add_subdirectory("applications/tools/test")
+add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
