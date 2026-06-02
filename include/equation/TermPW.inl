@@ -109,7 +109,7 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
 
     // GPU launcher: host function that launches the templated kernel
     t.gpu_launcher = [func, pf, nx, ny, nz, sx, sy, g]
-                     (double* d_rhs, double c, ScratchPool&) mutable {
+                     (double* d_rhs, double c, ScratchPool& pool) mutable {
         const double* d_src = pf->d_curr;
         if (!d_src)
             throw std::runtime_error(
@@ -117,7 +117,7 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
         int total   = nx * ny * nz;
         int threads = 256;
         int blocks  = (total + threads - 1) / threads;
-        kernel_pw_accumulate<Functor><<<blocks, threads>>>(
+        kernel_pw_accumulate<Functor><<<blocks, threads, 0, pool.stream>>>(
             d_rhs, d_src, func, c, nx, ny, nz, sx, sy, g);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -170,7 +170,7 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
     const ScalarField* pf2 = &f2;
 
     t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2]
-                     (double* d_rhs, double c, ScratchPool&) mutable {
+                     (double* d_rhs, double c, ScratchPool& pool) mutable {
         const double* d_src1 = pf1->d_curr;
         const double* d_src2 = pf2->d_curr;
         if (!d_src1 || !d_src2)
@@ -180,7 +180,7 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
         int total   = nx * ny * nz;
         int threads = 256;
         int blocks  = (total + threads - 1) / threads;
-        kernel_pw2_accumulate<Functor><<<blocks, threads>>>(
+        kernel_pw2_accumulate<Functor><<<blocks, threads, 0, pool.stream>>>(
             d_rhs, d_src1, d_src2, func, c, nx, ny, nz, sx, sy, g);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -233,7 +233,7 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
     const ScalarField* pf3 = &f3;
 
     t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2, pf3]
-                     (double* d_rhs, double c, ScratchPool&) mutable {
+                     (double* d_rhs, double c, ScratchPool& pool) mutable {
         const double* d_src1 = pf1->d_curr;
         const double* d_src2 = pf2->d_curr;
         const double* d_src3 = pf3->d_curr;
@@ -243,7 +243,7 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
         int total   = nx * ny * nz;
         int threads = 256;
         int blocks  = (total + threads - 1) / threads;
-        kernel_pw3_accumulate<Functor><<<blocks, threads>>>(
+        kernel_pw3_accumulate<Functor><<<blocks, threads, 0, pool.stream>>>(
             d_rhs, d_src1, d_src2, d_src3, func, c, nx, ny, nz, sx, sy, g);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)

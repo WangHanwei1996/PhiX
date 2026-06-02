@@ -69,12 +69,12 @@ Term makeGradientTerm(const ScalarField& f, int axis, double coeff) {
     const ScalarField* pf = &f;
 
     t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
-                     (double* d_rhs, double c, ScratchPool&) {
+                     (double* d_rhs, double c, ScratchPool& pool) {
         const double* d_src = pf->d_curr;
         if (!d_src)
             throw std::runtime_error("grad GPU: source field not on device");
         int total = nx * ny * nz;
-        kernel_grad_accumulate<Scheme><<<(total + 255) / 256, 256>>>(
+        kernel_grad_accumulate<Scheme><<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)

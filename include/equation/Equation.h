@@ -105,6 +105,13 @@ public:
     int    step = 0;
     double time = 0.0;
 
+    // [Stage 4] Attach a CUDA stream to this equation.  All GPU kernels and
+    // memsets submitted by computeRHS / advanceTransient / advanceSteady will
+    // use this stream.  nullptr (default) = CUDA default stream.
+    // Caller is responsible for stream lifetime.
+    void setStream(cudaStream_t s) { stream_ = s; }
+    cudaStream_t stream() const   { return stream_; }
+
     // -----------------------------------------------------------------------
     // Convenience: return true if RHS has been set
     // -----------------------------------------------------------------------
@@ -121,6 +128,9 @@ private:
 
     // EvalPlan — set when equation is configured via setRHS(ExprTree).
     std::unique_ptr<EvalPlan> eval_plan_;
+
+    // [Stage 4] CUDA stream for all GPU work submitted by this equation.
+    cudaStream_t stream_ = nullptr;
 
     // Scratch field for advanceTransient (lazily allocated on first call).
     mutable std::unique_ptr<ScalarField> rhs_scratch_;

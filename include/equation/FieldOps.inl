@@ -31,7 +31,8 @@ void mulAccumulateGPU(double* d_rhs,
                       const double* d_s1, const double* d_s2,
                       double coeff,
                       int nx, int ny, int nz,
-                      int sx, int sy, int g);
+                      int sx, int sy, int g,
+                      cudaStream_t stream);
 void mulAccumulateCPU(double* rhs,
                       const double* s1, const double* s2,
                       double coeff,
@@ -157,7 +158,7 @@ inline Term termTimesField(LhsExpr lhs,
         const double* d_f = pf->d_curr;
         if (!d_f)
             throw std::runtime_error("Term*Field GPU: field not on device");
-        mulAccumulateGPU(d_rhs, d_scratch, d_f, c, nx, ny, nz, sx, sy, g);
+        mulAccumulateGPU(d_rhs, d_scratch, d_f, c, nx, ny, nz, sx, sy, g, pool.stream);
     };
 
     out.cpu_kernel = [lhs, pf, nx, ny, nz, sx, sy, g, storedSize]
@@ -193,7 +194,7 @@ inline Term termTimesTerm(LhsExpr lhs, RhsExpr rhs,
         materialiseGPU(lhs, s1, storedSize, pool);
         double* s2 = pool.acquireDevice(storedSize);
         materialiseGPU(rhs, s2, storedSize, pool);
-        mulAccumulateGPU(d_rhs, s1, s2, c, nx, ny, nz, sx, sy, g);
+        mulAccumulateGPU(d_rhs, s1, s2, c, nx, ny, nz, sx, sy, g, pool.stream);
     };
 
     out.cpu_kernel = [lhs, rhs, nx, ny, nz, sx, sy, g, storedSize]

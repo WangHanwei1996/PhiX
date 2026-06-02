@@ -341,7 +341,7 @@ Term divFace(const FaceField* fx,
                       sx_c, sy_c,
                       sx_fx, sy_fx, sx_fy, sy_fy, sx_fz, sy_fz,
                       ghost, inv_dx, inv_dy, inv_dz]
-                     (double* d_rhs, double c, ScratchPool&)
+                     (double* d_rhs, double c, ScratchPool& pool)
     {
         if (fx && !fx->d_data)
             throw std::runtime_error("divFace GPU: flux_x not on device");
@@ -355,7 +355,7 @@ Term divFace(const FaceField* fx,
         const double* dfz = fz ? fz->d_data : nullptr;
 
         int total = nx * ny * nz;
-        kernel_div_face<<<(total+255)/256, 256>>>(
+        kernel_div_face<<<(total+255)/256, 256, 0, pool.stream>>>(
             d_rhs, dfx, dfy, dfz, c,
             nx, ny, nz, sx_c, sy_c,
             sx_fx, sy_fx, sx_fy, sy_fy, sx_fz, sy_fz,

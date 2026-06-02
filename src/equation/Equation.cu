@@ -252,14 +252,14 @@ Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff) {
     const ScalarField* pg = &g;
 
     t.gpu_launcher = [pf, pg, nx, ny, nz, sx, sy, gh, dim, inv_2dx, inv_2dy, inv_2dz]
-                     (double* d_rhs, double c, ScratchPool&) {
+                     (double* d_rhs, double c, ScratchPool& pool) {
         const double* d_f = pf->d_curr;
         const double* d_g = pg->d_curr;
         if (!d_f || !d_g)
             throw std::runtime_error(
                 "grad_dot GPU: a field not on device");
         int total = nx * ny * nz;
-        kernel_grad_dot_accumulate<<<(total + 255) / 256, 256>>>(
+        kernel_grad_dot_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_f, d_g, c, nx, ny, nz, sx, sy,
             gh, dim, inv_2dx, inv_2dy, inv_2dz);
         cudaError_t err = cudaGetLastError();
@@ -346,21 +346,22 @@ void Equation::computeRHS(ScalarField& rhs) const {
     if (eval_plan_) {
         if (eval_plan_->empty())
             throw std::runtime_error("Equation::computeRHS: EvalPlan is empty (call setRHS first)");
-        CUDA_CHECK(cudaMemset(rhs.d_curr, 0, rhs.storedSize * sizeof(double)));
+        CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(double), stream_));
         scratch_pool_.reset();
+        scratch_pool_.stream = stream_;
         eval_plan_->execute(rhs, scratch_pool_);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        // No DeviceSynchronize here — callers sync at step boundaries.
         return;
     }
 
     if (rhs_expr_.terms.empty())
         throw std::runtime_error("Equation::computeRHS: RHS not set (call setRHS first)");
 
-    // Zero physical cells of rhs (not whole stored array — ghost stays 0)
-    // For simplicity zero the whole stored array; cost is negligible.
-    CUDA_CHECK(cudaMemset(rhs.d_curr, 0, rhs.storedSize * sizeof(double)));
+    // Zero the whole stored array asynchronously.
+    CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(double), stream_));
 
     scratch_pool_.reset();
+    scratch_pool_.stream = stream_;
     for (const auto& term : rhs_expr_.terms) {
         if (!term.gpu_launcher)
             throw std::runtime_error(
@@ -368,7 +369,7 @@ void Equation::computeRHS(ScalarField& rhs) const {
                 "Did you build it with a non-CUDA path?");
         term.gpu_launcher(rhs.d_curr, term.coeff, scratch_pool_);
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // No DeviceSynchronize here — callers sync at step boundaries.
 }
 
 void Equation::computeRHSCPU(ScalarField& rhs) const {
@@ -545,7 +546,7 @@ void materialiseGPU(const RHSExpr& expr,
                     double* d_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
-    CUDA_CHECK(cudaMemset(d_buf, 0, storedSize * sizeof(double)));
+    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(double), pool.stream));
     for (const auto& t : expr.terms) {
         if (!t.gpu_launcher)
             throw std::runtime_error(
@@ -557,7 +558,7 @@ void materialiseGPU(const Term& t,
                     double* d_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
-    CUDA_CHECK(cudaMemset(d_buf, 0, storedSize * sizeof(double)));
+    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(double), pool.stream));
     if (!t.gpu_launcher)
         throw std::runtime_error("Composite GPU: Term has no GPU launcher");
     t.gpu_launcher(d_buf, t.coeff, pool);
@@ -602,12 +603,13 @@ void mulAccumulateGPU(double* d_rhs,
                       const double* d_s1, const double* d_s2,
                       double coeff,
                       int nx, int ny, int nz,
-                      int sx, int sy, int g)
+                      int sx, int sy, int g,
+                      cudaStream_t stream)
 {
     int total = nx * ny * nz;
     int threads = 256;
     int blocks  = (total + threads - 1) / threads;
-    kernel_mul_accumulate<<<blocks, threads>>>(
+    kernel_mul_accumulate<<<blocks, threads, 0, stream>>>(
         d_rhs, d_s1, d_s2, coeff, nx, ny, nz, sx, sy, g);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -645,7 +647,7 @@ static Term makeStencilOnExprTerm(
         const ScalarField&  layout,                                // for mesh/ghost/storedSize
         std::vector<BoundaryCondition*> bcs,
         std::function<void(double* /*rhs*/, const double* /*src*/,
-                           double /*coeff*/)> gpu_op,
+                           double /*coeff*/, ScratchPool& /*pool*/)> gpu_op,
         std::function<void(double* /*rhs*/, const double* /*src*/,
                            double /*coeff*/)> cpu_op,
         TermType  out_type,
@@ -677,7 +679,7 @@ static Term makeStencilOnExprTerm(
         for (auto* bc : bcs) bc->applyOnGPU(shell);
 
         // 4. Run the FD operator: rhs += c * op(scratch)
-        gpu_op(d_rhs, d_scratch, c);
+        gpu_op(d_rhs, d_scratch, c, pool);
     };
 
     out.cpu_kernel = [src_expr, pmesh, ghost, storedSize, bcs,
@@ -714,9 +716,9 @@ static Term lapOnExpr(SrcExpr src_expr, const ScalarField& layout,
     double inv_dz2 = (dim >= 3) ? 1.0 / (layout.mesh.d[2] * layout.mesh.d[2]) : 0.0;
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                  (double* d_rhs, const double* d_src, double c) {
+                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
-        kernel_lap_accumulate<<<(total + 255) / 256, 256>>>(
+        kernel_lap_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim,
             inv_dx2, inv_dy2, inv_dz2);
         cudaError_t err = cudaGetLastError();
@@ -771,9 +773,9 @@ static Term gradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     double inv_2d = 0.5 / layout.mesh.d[axis];
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, axis, inv_2d]
-                  (double* d_rhs, const double* d_src, double c) {
+                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
-        kernel_grad_accumulate<<<(total + 255) / 256, 256>>>(
+        kernel_grad_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_2d);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -873,9 +875,9 @@ static Term isoGradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     double inv_dz = (dim >= 3) ? 1.0 / layout.mesh.d[2] : 0.0;
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
-                  (double* d_rhs, const double* d_src, double c) {
+                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
-        kernel_iso9_grad_accumulate<<<(total + 255) / 256, 256>>>(
+        kernel_iso9_grad_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -962,10 +964,12 @@ void Equation::advanceTransient(const std::vector<BoundaryCondition*>& bcs,
     computeRHS(*rhs_scratch_);
 
     int n = static_cast<int>(unknown.storedSize);
-    kernel_eq_axpy<<<(n + 255) / 256, 256>>>(
+    kernel_eq_axpy<<<(n + 255) / 256, 256, 0, stream_>>>(
         unknown.d_curr, rhs_scratch_->d_curr, dt, n);
     CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // Sync before advanceTimeLevelGPU (d_prev ← d_curr) and before caller
+    // might read results from CPU side.
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     unknown.advanceTimeLevelGPU();
 

@@ -55,6 +55,11 @@ public:
 
     void reset() { next_dev_ = 0; next_host_ = 0; }
 
+    // [Stage 4] Stream to use for all GPU operations issued through this pool.
+    // nullptr = CUDA default stream (backwards-compatible, in-order execution).
+    // Set by Equation::computeRHS before executing steps.
+    cudaStream_t stream = nullptr;
+
 private:
     std::vector<double*>             dev_bufs_;
     std::vector<std::size_t>         dev_sizes_;

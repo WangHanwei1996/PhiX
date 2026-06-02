@@ -11,3 +11,8 @@ add_executable(module_bc_injection test_bc_injection.cu)
 target_link_libraries(module_bc_injection PRIVATE phix)
 set_target_properties(module_bc_injection PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_bc_injection COMMAND module_bc_injection)
+
+add_executable(module_stream test_stream.cu)
+target_link_libraries(module_stream PRIVATE phix)
+set_target_properties(module_stream PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_stream COMMAND module_stream)
