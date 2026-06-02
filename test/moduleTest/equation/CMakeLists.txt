@@ -16,3 +16,8 @@ add_executable(module_stream test_stream.cu)
 target_link_libraries(module_stream PRIVATE phix)
 set_target_properties(module_stream PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_stream COMMAND module_stream)
+
+add_executable(module_fused test_fused.cu)
+target_link_libraries(module_fused PRIVATE phix)
+set_target_properties(module_fused PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_fused COMMAND module_fused)
