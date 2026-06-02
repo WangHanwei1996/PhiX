@@ -84,3 +84,6 @@ inline Term divFace(const FaceField& flux_x, double coeff = 1.0) {
 }
 
 } // namespace PhiX
+
+// Face-wise point-wise transforms (symmetric to TermPW for cell-centred fields)
+#include "operators/FacePW.h"

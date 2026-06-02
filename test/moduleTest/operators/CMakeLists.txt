@@ -7,3 +7,8 @@ add_executable(module_face_ops test_face_ops.cu)
 target_link_libraries(module_face_ops PRIVATE phix)
 set_target_properties(module_face_ops PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_face_ops COMMAND module_face_ops)
+
+add_executable(module_face_pw test_face_pw.cu)
+target_link_libraries(module_face_pw PRIVATE phix)
+set_target_properties(module_face_pw PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_face_pw COMMAND module_face_pw)
