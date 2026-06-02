@@ -55,6 +55,7 @@ add_library(phix STATIC
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp
     src/equation/Equation.cu
+    src/equation/EvalPlan.cu
     src/equation/Expr.cu
     src/equation/VectorEquation.cu
     src/solver/Solver.cu

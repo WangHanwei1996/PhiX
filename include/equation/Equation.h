@@ -8,6 +8,14 @@
 #include <vector>
 
 namespace PhiX {
+// Forward declarations to avoid circular includes:
+//   EvalPlan.h  includes  Equation.h  (via FieldOps.inl)
+//   Equation.h  includes  EvalPlan.h  ← break this cycle by using fwd decls
+struct ExprTree;
+class  EvalPlan;
+}
+
+namespace PhiX {
 
 // ---------------------------------------------------------------------------
 // Equation
@@ -27,6 +35,11 @@ namespace PhiX {
 
 class Equation {
 public:
+    // Provide an explicit destructor so that the unique_ptr<EvalPlan>
+    // can be compiled with an incomplete EvalPlan type in the header but
+    // defined in Equation.cu where EvalPlan is fully visible.
+    ~Equation();
+
     std::string              name;
     ScalarField&                   unknown;     // the d/dt field (non-owning ref)
     std::vector<ScalarField*>      auxFields;   // other fields used on RHS (non-owning)
@@ -37,7 +50,8 @@ public:
     // Set the RHS expression.  Can be called again to update mid-simulation.
     // -----------------------------------------------------------------------
     void setRHS(const RHSExpr& expr);
-    void setRHS(const Term& t);   // convenience: single-term RHS
+    void setRHS(const Term& t);      // convenience: single-term RHS
+    void setRHS(const ExprTree& tree); // new ExprTree API (Stage 2)
 
     // -----------------------------------------------------------------------
     // Evaluate RHS into rhs.d_curr on GPU.
@@ -76,13 +90,16 @@ public:
     // -----------------------------------------------------------------------
     // Convenience: return true if RHS has been set
     // -----------------------------------------------------------------------
-    bool hasRHS() const { return !rhs_expr_.terms.empty(); }
+    bool hasRHS() const { return !rhs_expr_.terms.empty() || (bool)eval_plan_; }
     int  requiredGhost() const { return requiredGhost_; }
 
 private:
     RHSExpr               rhs_expr_;
     mutable ScratchPool   scratch_pool_;
     int                   requiredGhost_ = 0;
+
+    // EvalPlan — set when equation is configured via setRHS(ExprTree).
+    std::unique_ptr<EvalPlan> eval_plan_;
 
     // Scratch field for advanceTransient (lazily allocated on first call).
     mutable std::unique_ptr<ScalarField> rhs_scratch_;

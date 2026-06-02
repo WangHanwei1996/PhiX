@@ -1,7 +1,11 @@
 #include "equation/Equation.h"
+#include "equation/EvalPlan.h"
+#include "equation/Expr.h"
 #include "field/ScalarField.h"
 #include "field/VectorField.h"
 #include "equation/Term.h"
+#include "equation/TermPW.inl"
+#include "equation/FieldOps.inl"
 #include "boundary/BoundaryCondition.h"
 #include "operators/Gradient.h"
 #include "scheme/Isotropic.h"
@@ -306,6 +310,10 @@ Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff) {
 Equation::Equation(ScalarField& unknown_, const std::string& name_)
     : name(name_), unknown(unknown_) {}
 
+// Explicit destructor: EvalPlan must be fully defined here (Equation.h only
+// forward-declares it to break the circular include chain).
+Equation::~Equation() = default;
+
 void Equation::setRHS(const RHSExpr& expr) {
     rhs_expr_ = expr;
     requiredGhost_ = 0;
@@ -316,11 +324,30 @@ void Equation::setRHS(const RHSExpr& expr) {
 void Equation::setRHS(const Term& t) {
     rhs_expr_ = RHSExpr(t);
     requiredGhost_ = t.ghostRequired;
+    eval_plan_.reset();
+}
+
+void Equation::setRHS(const ExprTree& tree) {
+    eval_plan_ = std::make_unique<EvalPlan>(lowerExprTree(tree));
+    requiredGhost_ = tree.ghostRequired();
+    // Keep rhs_expr_ empty so hasRHS() reflects the plan correctly.
+    rhs_expr_ = RHSExpr();
 }
 
 void Equation::computeRHS(ScalarField& rhs) const {
     if (!rhs.deviceAllocated())
         throw std::runtime_error("Equation::computeRHS: rhs device memory not allocated");
+
+    if (eval_plan_) {
+        if (eval_plan_->empty())
+            throw std::runtime_error("Equation::computeRHS: EvalPlan is empty (call setRHS first)");
+        CUDA_CHECK(cudaMemset(rhs.d_curr, 0, rhs.storedSize * sizeof(double)));
+        scratch_pool_.reset();
+        eval_plan_->execute(rhs, scratch_pool_);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        return;
+    }
+
     if (rhs_expr_.terms.empty())
         throw std::runtime_error("Equation::computeRHS: RHS not set (call setRHS first)");
 
@@ -340,6 +367,15 @@ void Equation::computeRHS(ScalarField& rhs) const {
 }
 
 void Equation::computeRHSCPU(ScalarField& rhs) const {
+    if (eval_plan_) {
+        if (eval_plan_->empty())
+            throw std::runtime_error("Equation::computeRHSCPU: EvalPlan is empty");
+        std::fill(rhs.curr.begin(), rhs.curr.end(), 0.0);
+        scratch_pool_.reset();
+        eval_plan_->executeCPU(rhs, scratch_pool_);
+        return;
+    }
+
     if (rhs_expr_.terms.empty())
         throw std::runtime_error("Equation::computeRHSCPU: RHS not set");
 

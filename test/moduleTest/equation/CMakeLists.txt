@@ -1,3 +1,8 @@
 add_executable(module_expr test_expr.cpp)
 target_link_libraries(module_expr PRIVATE phix)
 add_test(NAME module_expr COMMAND module_expr)
+
+add_executable(module_evalplan test_evalplan.cu)
+target_link_libraries(module_evalplan PRIVATE phix)
+set_target_properties(module_evalplan PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_evalplan COMMAND module_evalplan)
