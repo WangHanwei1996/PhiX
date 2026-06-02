@@ -1,8 +1,10 @@
-add_executable(DG_2D "dendrite_growth.cu")
+# [makePhi generated]
 
-target_link_libraries(DG_2D PRIVATE phix)
+add_executable(dendrite_growth dendrite_growth.cu)
 
-set_target_properties(DG_2D PROPERTIES
+target_link_libraries(dendrite_growth PRIVATE phix)
+
+set_target_properties(dendrite_growth PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )
