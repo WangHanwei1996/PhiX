@@ -1,8 +1,10 @@
-add_executable(CH_2D "Cahn-Hillard_double-well.cu")
+# [makePhi generated]
 
-target_link_libraries(CH_2D PRIVATE phix)
+add_executable(Cahn-Hillard_double-well Cahn-Hillard_double-well.cu)
 
-set_target_properties(CH_2D PROPERTIES
+target_link_libraries(Cahn-Hillard_double-well PRIVATE phix)
+
+set_target_properties(Cahn-Hillard_double-well PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )

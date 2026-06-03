@@ -46,14 +46,3 @@ stream 感知执行、逐分量 `ExprTree` RHS 设置、BC 自动注入，以及
 
 ---
 
-## 系列总结（v2.6.1 – v2.6.6）
-
-| 版本 | Stage | 描述 |
-|------|-------|------|
-| v2.6.1 | 1 | ExprTree 节点系统 |
-| v2.6.2 | 2 | EvalPlan 降低 |
-| v2.6.3 | 3 | BC 自动注入（BcMap） |
-| v2.6.4 | 4 | Stream 化（cudaStream_t 全面传播） |
-| v2.6.5 | 5 | FusedTerm 编译期表达式模板 |
-| **v2.6.6** | **6** | **VectorEquation 泛化** |
-

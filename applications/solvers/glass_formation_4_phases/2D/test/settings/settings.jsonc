@@ -1,0 +1,100 @@
+{
+    // =========================================================================
+    // GFA_4ph 测试案例 — Cu₅₀Zr₅₀ 等温晶化（T = 1100 K）
+    //
+    // 目的
+    //   验证求解器实现的热力学/动力学是否与 Wang & Napolitano (2012) 一致：
+    //     · CALPHAD 自由能（G_liq, G_Cu10Zr7, G_CuZr, G_CuZr2）
+    //     · Inden 短程有序项（Eq.[8] 在论文中）
+    //     · 4 相 pairwise Allen-Cahn + Gibbs 单纯形投影
+    //     · 模型参数完全来自论文 Table II
+    //
+    // 初始条件（由 gen_initial_field.py 生成）
+    //   液相（φ₀=1）背景中植入 CuZr B2（φ₂=1）晶核，半径 15 nm（超临界核）。
+    //   η=0（纯液相，无非晶有序化），c=0.5 固定（Cu₅₀Zr₅₀）。
+    //   预期：CuZr 晶核在 T=1100 K（过冷度 ~108 K 低于熔点 ~1208 K）下持续生长。
+    //
+    // 与论文 Fig.5 的差异（当前求解器局限性）
+    //   1) T 为常数（未实现冷却速率调度），论文计算 10²–10⁵ K/s 竞争结果
+    //   2) η 无 Gaussian 热噪声，论文需噪声激活玻璃转变
+    //   3) c 固定（CH 方程未求解），论文使用动态成分场
+    //   上述扩展是未来工作；当前测试验证等温晶体生长物理是否正确。
+    //
+    // 运行方法（从 test/ 目录执行）
+    //   1. python3 gen_initial_field.py          # 生成初始场
+    //   2. mkdir -p output
+    //   3. ../../../../../../build/applications/solvers/glass_formation_4_phases/2D/GFA_4ph
+    //
+    // 网格与稳定性分析
+    //   界面宽度  δ₀₂ ≈ √(2ε₀₂²/w₀₂) = √(2×0.7e-9/4.1e8) ≈ 1.85 nm ≈ 3 cells
+    //   L_eff_max = L₀₁+L₀₂+L₀₃ = 0.05+0.08+0.05 = 0.18
+    //   稳定性    dt ≤ dx²/(2×L_eff×ε²_max) = (6e-10)²/(2×0.18×1.1e-9) ≈ 9.1e-10 s
+    //   使用 dt = 5e-10 s（安全系数 ~1.8×），nSteps=200000 对应 100 μs
+    // =========================================================================
+
+    "mesh": {
+        "nx": 256,
+        "ny": 256,
+        "dx": 6.0e-10,   // [m]  0.6 nm ≈ δ₀₂/3，充分分辨液-晶界面
+        "dy": 6.0e-10,   // [m]
+        "x0": 0.0,
+        "y0": 0.0        // 域尺寸: 256×0.6 nm = 153.6 nm × 153.6 nm
+    },
+
+    "initialize": {
+        // "initial_field" → 从 settings/initial_field/{name}.field 读取
+        "start_from": "initial_field",
+
+        // 显式 Euler 稳定性: dt ≤ 9.1e-10 s，取 5e-10 s 保守
+        "dt"    : 5.0e-10,    // [s]
+
+        // 总时长 200000 × 5e-10 s = 100 μs
+        "nSteps": 30,
+
+        // 温度调度 — cooling_rate=0 表示等温
+        "T_start"      : 1100.0,  // [K]  初始温度（低于 CuZr 熔点 ~1208 K）
+        "T_end"        : 700.0,   // [K]  终止温度（等温时不生效）
+        "cooling_rate" : 0.0      // [K/s]  0 = 等温；>0 = 冷却模拟（如 1e3）
+    },
+
+    "constants": {
+        // 摩尔体积 [m³/mol-atom]，来自 Wang & Napolitano (2012) 参数
+        "Vm_liq" : 1.058e-5,   // 液相（非晶）
+        "Vm_phi1": 9.77e-6,    // Cu₁₀Zr₇
+        "Vm_phi2": 1.039e-5,   // CuZr (B2)
+        "Vm_phi3": 1.164e-5,   // CuZr₂
+
+        // Inden 短程有序参数（论文 Eq.[8]）
+        //   Δf^SR = −(R Tg / Vm_liq) × ln(1+α) × f(τ)
+        //   → α ≈ exp(4000/(8.314×700)) − 1 ≈ 0.99 ≈ 1.0
+        "T_g"  : 700.0,   // [K]  玻璃转变温度（论文 Table I，Cu₅₀Zr₅₀ 平均）
+        "alpha": 1.0,     // 短程有序幅度参数
+        "p_SR" : 0.28,    // Inden p 参数（FCC 类，Cu-Zr 合金典型值）
+
+        // Cahn-Hilliard 参数
+        //   M_c: 原子扩散率量级 D/(∂²G/∂c²·Vm)，典型 10⁻²⁰–10⁻¹⁸ m⁵/(J·s)
+        //   kappa_c: 成分梯度能，与界面宽度相关，使用小值避免额外界面
+        "M_c"     : 1.0e-19,  // [m⁵/(J·s)]  成分迁移率
+        "kappa_c" : 1.0e-10,  // [J/m]  成分梯度能（小值，减少成分界面能干扰）
+
+        // 热噪声参数（η 的 Gaussian 扰动，激活自发玻璃转变）
+        //   noise_std = 0 禁用噪声（等温晶化测试无需噪声）
+        "noise_mean": 0.0,
+        "noise_std" : 0.0,    // [无量纲] 0=无噪声；冷却模拟建议 1e-3
+        "noise_seed": 42
+    },
+
+    "boundary_conditions": {
+        // 周期边界——与论文 Fig.5 一致
+        "x_min": "Periodic",
+        "x_max": "Periodic",
+        "y_min": "Periodic",
+        "y_max": "Periodic"
+    },
+
+    "output": {
+        "print_interval": 1,     // 诊断
+        "write_interval": 1,     // 诊断：每步写出
+        "format"        : "ALL"    // BINARY + DAT + VTK 三种格式
+    }
+}

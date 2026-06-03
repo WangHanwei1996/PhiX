@@ -20,6 +20,12 @@ develop/Spinodal\ Decomposition/spinodal_decomposition
 applications/solvers/Cahn-Hillard_double-well/2D/CH_2D
 applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D/CH_AC_2D
 applications/solvers/glass_formation/2D/GFA_2D
+applications/solvers/MPF_AC_DW/MPF_AC_DW
+applications/solvers/MPF_AC_origin/MPF_AC
+applications/solvers/SolidificationFeC_PhiX/2D/SolidificationFeC_PhiX
+applications/solvers/dendrite_growth/dendrite_growth_flag/dendrite_growth_flag
+applications/solvers/GFA/verification0/GFA_eta_only
+applications/solvers/GFA/verification0/GFA_eta_only_0
 
 # Output data
 output/
@@ -28,10 +34,23 @@ output/
 *.dat
 *.field
 *.png
+*.vts
+*.vti
+*.vtu
+
+# Backup files
+*.bak
+
+# Output backup directories
+output.bak/
 
 # Compiled binaries without extension (e.g. etc/temp/simulate)
 etc/temp/simulate
 develop/Spinodal\ Decomposition/spinodal_decomposition
+applications/solvers/Cahn-Hillard_double-well/2D/Cahn-Hillard_double-well
+applications/solvers/glass_formation_4_phases/2D/GFA_4ph
+applications/solvers/dendrite_growth/2D/dendrite_growth
+applications/tools/test/div_field
 
 # Python cache
 __pycache__/

@@ -1,0 +1,63 @@
+{
+    // =========================================================================
+    // MPF_AC — Static triple junction benchmark (2D)  [matching MATLAB ref]
+    //
+    // Three phases: phi0 (invades from top), phi_a (left), phi_b (right).
+    // IC: top ny_top rows → phi0=1; lower left → phi_a=1; lower right → phi_b=1.
+    // BCs: top/bottom Neumann; left/right non-uniform Dirichlet (frozen ghost).
+    //
+    // Domain: W=100 × H=200 cells, dx = dy = 1
+    // Interface width: ℓ = 5  (= 5*dx, matching MATLAB eps = 5*dx)
+    //
+    // Free energy: obstacle potential + grad1 gradient energy
+    //   κ_ij  = ℓ × γ_ij   = 5.0
+    //   Ω_ij  = K × γ_ij/ℓ = (16/π²)/5 ≈ 0.3242   (K = 16/π²)
+    //
+    // Mobility: M0 = mab / (3*ℓ) = 1/(3×5) ≈ 0.06667   (mab=1 in non-dim)
+    //
+    // Stability (explicit Euler): dt_max ~ dx² / (4 M0 κ) = 1/(4×0.0667×5) ≈ 0.75
+    //   MATLAB uses dt=0.1;  t_end=10000 → nSteps=100000.
+    // =========================================================================
+
+    "mesh": {
+        "nx": 100,
+        "ny": 200,
+        "dx": 1.0,
+        "dy": 1.0,
+        "x0": 0.0,
+        "y0": 0.0
+    },
+
+    "initialize": {
+        // "initial_field" — cold start (ICs generated in code)
+        // "<integer>"     — warm restart from output/ (reads phi0_N.field etc.)
+        "start_from": "initial_field",
+
+        // Number of top rows occupied by phi0 in the IC and side BCs
+        // (matching MATLAB: 20 rows out of ny=200)
+        "ny_top": 20,
+
+        "dt"    : 0.1,
+
+        "nSteps": 100000
+    },
+
+    "constants": {
+        // --- Pairwise interface energies (non-dimensional) ---
+        "gamma_0a": 1.0,
+        "gamma_0b": 1.0,
+        "gamma_ab": 1.0,
+
+        // --- Diffuse interface width  ℓ = eps = 5*dx ---
+        "ell": 5.0,
+
+        // --- Pairwise kinetic coefficient M0 = mab / (3*ℓ) ---
+        "M0": 0.066667
+    },
+
+    "output": {
+        "print_interval": 5000,
+        "write_interval": 10000,
+        "format"        : "ALL"
+    }
+}

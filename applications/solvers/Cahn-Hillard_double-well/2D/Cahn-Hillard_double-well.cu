@@ -14,12 +14,19 @@
  *      μ     = f'(c) − κ ∇²c
  *      f'(c) = 2ρ (c − ca)(c − cb)(2c − ca − cb)
  *
+ *  Architecture (v2.6+)
+ *  ---------------------
+ *  · μ equation uses FusedTerm — fpw + flap compile into a single GPU
+ *    kernel, eliminating the intermediate global-memory write.
+ *
  \***********************************************************************/
 
 #include "mesh/Mesh.h"
 #include "field/ScalarField.h"
 #include "boundary/BCFactory.h"
 #include "equation/Equation.h"
+#include "equation/FusedTerm.h"
+#include "solver/Solver.h"
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
@@ -70,7 +77,7 @@ int main(int argc, char* argv[])
     mu.uploadAllToDevice();
 
     // === 4. Boundary conditions ==============================================
-    auto  bcSet = buildBCs(cfg["boundary_conditions"]);
+    auto  bcSet = buildBCs(mesh, cfg["boundary_conditions"]);
     auto& bcs   = bcSet.ptrs;
 
     // === 5. Equations ========================================================
@@ -80,31 +87,39 @@ int main(int argc, char* argv[])
     const double kappa = cfg["constants"]["kappa"];
     const double M     = cfg["constants"]["M"];
 
+    using namespace PhiX::Fused;
+
     // μ = f'(c) − κ ∇²c
+    // FusedTerm fuses fpw + flap into a single GPU kernel: no intermediate
+    // scratch write for the pointwise term before the Laplacian is computed.
     Equation eqMu(mu, "CH_mu");
-    eqMu.setRHS(
-        pw(c, PHIX_FN (double c_val) {
-            return 2.0 * rho * (c_val - ca) * (c_val - cb)
-                       * (2.0 * c_val - ca - cb);
-        })
-        - kappa * lap(c)
-    );
+    eqMu.setRHS(fuse(
+        fpw(c, PHIX_FN (double cv) {
+            return 2.0 * rho * (cv - ca) * (cv - cb)
+                       * (2.0 * cv - ca - cb);
+        }) + flap(c) * (-kappa),
+        c));
 
     // dc/dt = M ∇²μ
     Equation eqC(c, "CH_c");
     eqC.setRHS(M * lap(mu));
 
-    // === 6. Time loop ========================================================
-    //  eqMu (STEADY)    — algebraic: μ = f'(c) − κ∇²c
-    //  eqC  (TRANSIENT) — time-integrated: dc/dt = M∇²μ
-    eqC.step = start_step;
-    eqC.time = start_step * dt;
+    // === 6. Solver (multi-step: STEADY μ, then TRANSIENT c) =================
+    //  Step 1 (STEADY)    — algebraic: μ = f'(c) − κ∇²c
+    //  Step 2 (TRANSIENT) — time-integrated: dc/dt = M∇²μ
+    Solver solver({
+        {&c,  bcs, &eqMu, EquationType::STEADY},
+        {&mu, bcs, &eqC,  EquationType::TRANSIENT}
+    }, dt);
+
+    solver.step = start_step;
+    solver.time = start_step * dt;
 
     // === 7. Output & time loop ===============================================
     IO::OutputWriter writer(cfg["output"]);
 
     if (start_step == 0) {
-        writer.writeFields(c, 0, eqC.time);
+        writer.writeFields(c, 0, solver.time);
         std::cout << "Starting Cahn-Hilliard simulation ("
                   << nSteps << " steps, dt=" << dt << ")\n";
     } else {
@@ -116,16 +131,12 @@ int main(int argc, char* argv[])
 
     writer.resetTimer();
 
-    for (int s = start_step; s < nSteps; ++s) {
-        eqMu.advanceSteady(bcs, &c);
-        eqC.advanceTransient(bcs, dt, &mu);
-
-        if (writer.shouldPrint(eqC.step))
-            writer.printProgress(eqC.step, eqC.time);
-
-        if (writer.shouldWrite(eqC.step))
-            writer.writeFields(c, eqC.step, eqC.time);
-    }
+    solver.run(nSteps - start_step, 1, [&](const Solver& s) {
+        if (writer.shouldPrint(s.step))
+            writer.printProgress(s.step, s.time);
+        if (writer.shouldWrite(s.step))
+            writer.writeFields(c, s.step, s.time);
+    });
 
     std::cout << "Done.\n";
     return 0;

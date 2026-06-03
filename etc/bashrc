@@ -52,7 +52,41 @@ whw() {
     cd "$PHIX_DIR" || return
 }
 
+# ---------------------------------------------------------------------------
+# app — jump to applications directory
+# ---------------------------------------------------------------------------
+app() {
+    cd "$PHIX_DIR/applications" || return
+}
+
+# ---------------------------------------------------------------------------
+# develop — jump to develop directory
+# ---------------------------------------------------------------------------
+develop() {
+    cd "$PHIX_DIR/develop" || return
+}
+
+# ---------------------------------------------------------------------------
+# solver — manage solvers
+#   solver -list   list all compiled solver executables
+# ---------------------------------------------------------------------------
+solver() {
+    case "$1" in
+        -list)
+            find "$PHIX_DIR/applications/solvers" \
+                -type f -executable \
+                ! -name "*.*" \
+                -printf "%f\n" | sort
+            ;;
+        *)
+            echo "Usage: solver -list"
+            ;;
+    esac
+}
+
 echo "PhiX sourced: PHIX_DIR=$PHIX_DIR"
+
+echo -e "\033[32mWelcome to the PhiX Suite! 🚀\033[0m"
 
 # ---------------------------------------------------------------------------
 # makePhi — wrapper that calls the Python implementation then re-sources

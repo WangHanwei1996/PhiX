@@ -1,0 +1,120 @@
+{
+    // Parameters mapped from:
+    // /home/whw/OpenPhase-1.0.1/examples/SolidificationFeC/ProjectInput.opi
+
+    "mesh": {
+        "nx": 301,
+        "ny": 301,
+        "dx": 1.5e-6,
+        "dy": 1.5e-6,
+        "x0": 0.0,
+        "y0": 0.0
+    },
+
+    "initialize": {
+        "start_from": "initial_field",
+        "dt": 1.0e-5,
+        "nSteps": 10000,
+        "interface_width_cells": 4.5,
+        "solid_seed_radius_cells": 2
+    },
+
+    "composition": {
+        "C0_liquid_C": 0.0082,
+        // Initial solid composition = k * c_liquid = (|ML_0_1|/|ML_1_0|) * 0.0082
+        //   = (7800/22941) * 0.0082 = 0.340 * 0.0082 = 0.002788  (matching OpenPhase reference)
+        "C0_solid_C": 0.002788,
+        "C0_liquid_FE": 0.9918,
+        "C0_solid_FE": 0.996985,
+        "Vm_0_C": 7.0922e-6,
+        "Vm_1_C": 7.0922e-6,
+        "CMIN_0_C": 0.0,
+        "CMAX_0_C": 1.0,
+        "CMIN_1_C": 0.0,
+        "CMAX_1_C": 1.0
+    },
+
+    "interface_properties": {
+        "EnergyModel_0_1": "Cubic",
+        "Sigma_0_1": 0.24,
+        "EpsilonE_0_1": 0.75,
+        "EnergyModel_0_0": "Iso",
+        "Sigma_0_0": 0.24,
+        "EnergyModel_1_1": "Iso",
+        "Sigma_1_1": 0.24,
+
+        "MobilityModel_0_1": "Cubic",
+        "Mu_0_1": 8.0e-10,
+        "EpsilonM_0_1": 0.35,
+        "MobilityModel_0_0": "Iso",
+        "Mu_0_0": 4.0e-10,
+        "MobilityModel_1_1": "Iso",
+        "Mu_1_1": 4.0e-12
+    },
+
+    "driving_force": {
+        "Average": true,
+        "CutOff_0_1": 0.95
+    },
+
+    "partition_diffusion": {
+        "RefElement": "FE",
+        "Cs_0_1": 0.0,
+        "Ts_0_1": 1809.15,
+        "ML_0_1": -7800.0,
+        "ML_1_0": -22941.0,
+        "DC_0": 2.0e-8,
+        "DC_1": 6.0e-9,
+        "AE_0": 0.0,
+        "AE_1": 0.0,
+        "EF_0": 0.0,
+        "EF_1": -1.0e6,
+        "Flag_0": false,
+        "Flag_1": false
+    },
+
+    "phix_mapping": {
+        // phase_mobility = Mu_0_1 * phase_rhs_scale.
+        // phase_rhs_scale = 1: Mu_0_1 is already in SI units m^4/(J*s),
+        // which is the correct unit for the MPF phase equation prefactor.
+        // (kappa, barrier, drive_coupling absorb all eta factors)
+        "phase_rhs_scale": 1.0,
+        // driving_force_scale=1.0
+        "driving_force_scale": 1.0,
+        // not used in current code
+        "anisotropy_effective_cap": 0.75
+    },
+
+    "temperature": {
+        "T0": 1740.0,
+        "R0X": 0.0,
+        "R0Y": 0.0,
+        "R0Z": 0.0,
+        "DT_DRX": 0.0,
+        "DT_DRY": 0.0,
+        "DT_DRZ": 0.0,
+        "DT_Dt": 0.0
+    },
+
+    // Matches OpenPhase @DrivingForce section:
+    //   Average = Yes (spatial averaging not yet implemented in PhiX;
+    //                  the cutoff mask replicates the interface-only constraint)
+    //   CutOff_0_1 = 0.95  →  drive active when phi_s ∈ (0.05, 0.95)
+    "driving_force": {
+        "Average": true,
+        "CutOff_0_1": 0.95
+    },
+
+    "boundary_conditions": {
+        "x_min": "NoFlux",
+        "x_max": "NoFlux",
+        "y_min": "NoFlux",
+        "y_max": "NoFlux"
+    },
+
+    "output": {
+        "print_interval": 10,
+        "write_interval": 1000,
+        "format": "VTK"
+    }
+}
