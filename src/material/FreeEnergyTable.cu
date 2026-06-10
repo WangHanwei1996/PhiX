@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cuda_runtime.h>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace PhiX {
 namespace Material {
@@ -36,6 +38,39 @@ FreeEnergyTable::FreeEnergyTable(double c_min, double c_max, int nc,
 
     dc_ = (c_max_ - c_min_) / (nc_ - 1);
     dT_ = (T_max_ - T_min_) / (nT_ - 1);
+}
+
+// ---------------------------------------------------------------------------
+// Move semantics / destructor
+// ---------------------------------------------------------------------------
+
+FreeEnergyTable::FreeEnergyTable(FreeEnergyTable&& o) noexcept
+    : nc_(o.nc_), nT_(o.nT_),
+      c_min_(o.c_min_), c_max_(o.c_max_), dc_(o.dc_),
+      T_min_(o.T_min_), T_max_(o.T_max_), dT_(o.dT_),
+      data_(std::move(o.data_)),
+      d_data_(o.d_data_)
+{
+    o.d_data_ = nullptr;
+}
+
+FreeEnergyTable& FreeEnergyTable::operator=(FreeEnergyTable&& o) noexcept
+{
+    if (this != &o) {
+        freeDevice();
+        nc_    = o.nc_;    nT_    = o.nT_;
+        c_min_ = o.c_min_; c_max_ = o.c_max_; dc_ = o.dc_;
+        T_min_ = o.T_min_; T_max_ = o.T_max_; dT_ = o.dT_;
+        data_   = std::move(o.data_);
+        d_data_ = o.d_data_;
+        o.d_data_ = nullptr;
+    }
+    return *this;
+}
+
+FreeEnergyTable::~FreeEnergyTable()
+{
+    freeDevice();
 }
 
 // ---------------------------------------------------------------------------
@@ -97,55 +132,74 @@ FreeEnergyTable FreeEnergyTable::fromFile(const std::string& path)
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation — bilinear interpolation
+// Host evaluation — delegate to hostView() so logic lives in one place
 // ---------------------------------------------------------------------------
 
-double FreeEnergyTable::f(double c, double T) const
+double FreeEnergyTable::f(double c, double T) const    { return hostView().f(c, T); }
+double FreeEnergyTable::dfdc(double c, double T) const { return hostView().dfdc(c, T); }
+double FreeEnergyTable::dfdT(double c, double T) const { return hostView().dfdT(c, T); }
+
+// ---------------------------------------------------------------------------
+// GPU memory management
+// ---------------------------------------------------------------------------
+
+void FreeEnergyTable::allocDevice()
 {
-    c = clamp(c, c_min_, c_max_);
-    T = clamp(T, T_min_, T_max_);
+    if (d_data_) return;   // idempotent
+    std::size_t bytes = static_cast<std::size_t>(nc_) * nT_ * sizeof(double);
+    cudaError_t err = cudaMalloc(&d_data_, bytes);
+    if (err != cudaSuccess)
+        throw std::runtime_error(
+            std::string("FreeEnergyTable::allocDevice cudaMalloc failed: ") +
+            cudaGetErrorString(err));
+}
 
-    // Fractional indices
-    double fc = (c - c_min_) / dc_;
-    double fT = (T - T_min_) / dT_;
+void FreeEnergyTable::uploadToDevice()
+{
+    if (!d_data_)
+        throw std::runtime_error(
+            "FreeEnergyTable::uploadToDevice: call allocDevice() first");
+    std::size_t bytes = static_cast<std::size_t>(nc_) * nT_ * sizeof(double);
+    cudaError_t err = cudaMemcpy(d_data_, data_.data(), bytes, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess)
+        throw std::runtime_error(
+            std::string("FreeEnergyTable::uploadToDevice cudaMemcpy failed: ") +
+            cudaGetErrorString(err));
+}
 
-    // Integer floor indices, clamped so ic+1 and iT+1 stay in range
-    int ic = std::min(static_cast<int>(fc), nc_ - 2);
-    int iT = std::min(static_cast<int>(fT), nT_ - 2);
-
-    // Bilinear weights
-    double wc = fc - ic;   // in [0, 1]
-    double wT = fT - iT;
-
-    return (1.0 - wc) * (1.0 - wT) * at(ic,     iT    )
-         + (1.0 - wc) *        wT  * at(ic,     iT + 1)
-         +        wc  * (1.0 - wT) * at(ic + 1, iT    )
-         +        wc  *        wT  * at(ic + 1, iT + 1);
+void FreeEnergyTable::freeDevice()
+{
+    if (d_data_) {
+        cudaFree(d_data_);
+        d_data_ = nullptr;
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Derivatives via central finite differences on the interpolated surface
+// View factories
 // ---------------------------------------------------------------------------
 
-double FreeEnergyTable::dfdc(double c, double T) const
+FreeEnergyTableView FreeEnergyTable::hostView() const
 {
-    // Use a step of half a grid cell; clamp so both probe points stay in range
-    double h = 0.5 * dc_;
-    double c_lo = clamp(c - h, c_min_, c_max_);
-    double c_hi = clamp(c + h, c_min_, c_max_);
-    double span = c_hi - c_lo;
-    if (span == 0.0) return 0.0;
-    return (f(c_hi, T) - f(c_lo, T)) / span;
+    return FreeEnergyTableView{
+        data_.data(),
+        nc_, nT_,
+        c_min_, dc_, c_max_,
+        T_min_, dT_, T_max_
+    };
 }
 
-double FreeEnergyTable::dfdT(double c, double T) const
+FreeEnergyTableView FreeEnergyTable::deviceView() const
 {
-    double h = 0.5 * dT_;
-    double T_lo = clamp(T - h, T_min_, T_max_);
-    double T_hi = clamp(T + h, T_min_, T_max_);
-    double span = T_hi - T_lo;
-    if (span == 0.0) return 0.0;
-    return (f(c, T_hi) - f(c, T_lo)) / span;
+    if (!d_data_)
+        throw std::runtime_error(
+            "FreeEnergyTable::deviceView: device data not allocated/uploaded");
+    return FreeEnergyTableView{
+        d_data_,
+        nc_, nT_,
+        c_min_, dc_, c_max_,
+        T_min_, dT_, T_max_
+    };
 }
 
 } // namespace Material

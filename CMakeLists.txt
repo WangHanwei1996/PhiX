@@ -66,8 +66,8 @@ add_library(phix STATIC
     src/IO/ConfigFile.cpp
     src/IO/FieldIO.cpp
     src/IO/OutputWriter.cpp
-    src/material/FreeEnergyTable.cpp
-    src/material/BinaryAlloy.cpp
+    src/material/FreeEnergyTable.cu
+    src/material/BinaryAlloy.cu
 )
 
 target_include_directories(phix PUBLIC

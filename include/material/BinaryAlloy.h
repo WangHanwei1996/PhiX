@@ -67,6 +67,12 @@ public:
     // -----------------------------------------------------------------------
     const FreeEnergyTable& table() const { return table_; }
 
+    /// Shorthand: host view of the internal table (CPU / kernel testing).
+    FreeEnergyTableView hostView()   const { return table_.hostView(); }
+
+    /// Shorthand: device view — requires table().allocDevice() + uploadToDevice().
+    FreeEnergyTableView deviceView() const { return table_.deviceView(); }
+
 private:
     std::string     label_;
     FreeEnergyTable table_;
