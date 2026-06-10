@@ -49,6 +49,8 @@ add_library(phix STATIC
     src/field/ScalarField.cu
     src/field/VectorField.cu
     src/field/FaceField.cu
+    src/field/GibbsSimplex.cu
+    src/field/NoiseGenerator.cu
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
     src/operators/FaceOps.cu
@@ -57,12 +59,15 @@ add_library(phix STATIC
     src/equation/Equation.cu
     src/equation/EvalPlan.cu
     src/equation/Expr.cu
+    src/equation/EquationSystem.cu
     src/equation/VectorEquation.cu
     src/solver/Solver.cu
     src/solver/VectorSolver.cu
     src/IO/ConfigFile.cpp
     src/IO/FieldIO.cpp
     src/IO/OutputWriter.cpp
+    src/material/FreeEnergyTable.cpp
+    src/material/BinaryAlloy.cpp
 )
 
 target_include_directories(phix PUBLIC
@@ -95,7 +100,6 @@ add_subdirectory(test/sampleTest)
 # ---------------------------------------------------------------------------
 # add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 # add_subdirectory("applications/solvers/glass_formation/2D")
-# add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
 # add_subdirectory("applications/solvers/GFA/verification0")
 add_subdirectory("applications/solvers/dendrite_growth/2D")
 add_subdirectory("applications/solvers/dendrite_growth/dendrite_growth_flag")
@@ -104,3 +108,5 @@ add_subdirectory("applications/solvers/dendrite_growth/dendrite_growth_flag")
 # add_subdirectory("develop/fieldOperation")
 # add_subdirectory("applications/tools/test")
 add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
+add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
+add_subdirectory("applications/solvers/MPF_AC_DW")
