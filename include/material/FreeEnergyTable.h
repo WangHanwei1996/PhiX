@@ -73,7 +73,13 @@ struct FreeEnergyTableView {
 
 private:
     __host__ __device__
-    double at(int ic, int iT) const { return data[ic * nT + iT]; }
+    double at(int ic, int iT) const {
+#ifdef __CUDA_ARCH__
+        return __ldg(&data[ic * nT + iT]);  // read-only cache (texture path)
+#else
+        return data[ic * nT + iT];
+#endif
+    }
 
     __host__ __device__
     static double clamp(double v, double lo, double hi)
