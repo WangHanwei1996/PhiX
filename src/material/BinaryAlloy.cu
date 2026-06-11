@@ -11,10 +11,11 @@ BinaryAlloy::BinaryAlloy(std::string label, FreeEnergyTable table)
     : label_(std::move(label)), table_(std::move(table))
 {}
 
-BinaryAlloy BinaryAlloy::fromFile(const std::string& path, std::string label)
+BinaryAlloy BinaryAlloy::fromFile(const std::string& path, std::string label,
+                                   FileFormat fmt)
 {
-    FreeEnergyTable tbl = FreeEnergyTable::fromFile(path);
-    if (label.empty()) label = path;   // use path as fallback name
+    FreeEnergyTable tbl = FreeEnergyTable::fromFile(path, fmt);
+    if (label.empty()) label = path;
     return BinaryAlloy(std::move(label), std::move(tbl));
 }
 

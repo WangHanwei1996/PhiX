@@ -8,6 +8,15 @@ namespace PhiX {
 namespace Material {
 
 // ---------------------------------------------------------------------------
+// FileFormat  —  选择 FreeEnergyTable::fromFile 读取格式
+//
+//   AUTO  : 根据文件扩展名自动识别（.fetab → FETAB，.csv → CSV，其余→ FETAB）
+//   FETAB : 原生空白分隔格式（.fetab）
+//   CSV   : 逗号分隔格式（.csv），结构与 FETAB 相同，可直接用 Excel 打开
+// ---------------------------------------------------------------------------
+enum class FileFormat { AUTO, FETAB, CSV };
+
+// ---------------------------------------------------------------------------
 // FreeEnergyTableView  —  lightweight device-safe view of a FreeEnergyTable
 //
 // Holds a raw pointer (host or device) plus grid parameters.
@@ -108,16 +117,29 @@ private:
 //   auto view = table.deviceView();
 //   myKernel<<<...>>>(view, ...);
 //
-// File format  (.fetab, plain text)
-// ----------------------------------
-//   Lines beginning with '#' are ignored.
+// File formats
+// ------------
+// FETAB (.fetab)  — space/tab separated:
+//   Lines beginning with '#' are ignored (comments anywhere in file).
 //   First non-comment line:   nc  nT  c_min  c_max  T_min  T_max
 //   Followed by nc rows, each containing nT whitespace-separated values.
-//   Example:
 //
+// CSV (.csv)  — comma separated, same structure, opens directly in Excel:
+//   Comment lines beginning with '#' are ignored.
+//   First non-comment line:   nc,nT,c_min,c_max,T_min,T_max
+//   Followed by nc rows, each containing nT comma-separated values.
+//   Whitespace around commas is trimmed automatically.
+//
+// Example (FETAB):
 //     # Fe-B binary alloy free energy table
 //     40 100 0.0 1.0 300.0 1800.0
 //     -1.23e4  -1.22e4  ...   (nT values, ic=0)
+//     ...
+//
+// Example (CSV):
+//     # Fe-B binary alloy free energy table
+//     40,100,0.0,1.0,300.0,1800.0
+//     -1.23e4,-1.22e4,...
 //     ...
 // ---------------------------------------------------------------------------
 
@@ -133,8 +155,10 @@ public:
                     double T_min, double T_max, int nT,
                     std::vector<double> data);
 
-    /// Load from a .fetab file (see format description above).
-    static FreeEnergyTable fromFile(const std::string& path);
+    /// Load from a file.  Supported formats: FETAB, CSV.
+    /// fmt = FileFormat::AUTO  →  format inferred from file extension.
+    static FreeEnergyTable fromFile(const std::string& path,
+                                    FileFormat fmt = FileFormat::AUTO);
 
     // Non-copyable (may own GPU memory)
     FreeEnergyTable(const FreeEnergyTable&)            = delete;

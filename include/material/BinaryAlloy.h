@@ -2,7 +2,6 @@
 
 #include "material/IMaterial.h"
 #include "material/FreeEnergyTable.h"
-
 #include <string>
 #include <memory>
 
@@ -40,9 +39,12 @@ public:
     /// Construct with a human-readable label and a pre-built table.
     BinaryAlloy(std::string label, FreeEnergyTable table);
 
-    /// Convenience factory: load the table from a .fetab file.
+    /// Convenience factory: load the table from a file.
+    /// Supported formats: FETAB (.fetab), CSV (.csv).
+    /// fmt = FileFormat::AUTO  →  format inferred from file extension.
     static BinaryAlloy fromFile(const std::string& path,
-                                std::string        label = "");
+                                std::string        label = "",
+                                FileFormat         fmt   = FileFormat::AUTO);
 
     // -----------------------------------------------------------------------
     // IMaterial interface
