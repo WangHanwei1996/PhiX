@@ -136,7 +136,7 @@ def cmd_generate(cwd: Path) -> None:
     if ancestor_registered:
         print(f"[makePhi] Skipping root registration: already included via\n"
               f"          {ancestor_registered}")
-    elif add_sub in root_text:
+    elif rel.as_posix() in active_dirs:
         print(f"[makePhi] Already registered: {add_sub}")
     else:
         # Uncomment if a commented-out version exists; otherwise insert fresh.
@@ -150,7 +150,9 @@ def cmd_generate(cwd: Path) -> None:
                   f"          {add_sub}")
         root_cml.write_text(root_text)
 
-    targets = " ".join(cu.stem for cu in cu_files)
+    # Target names must match what make_local_cmake() generates (+ → _)
+    target_list = [re.sub(r"[+]", "_", cu.stem) for cu in cu_files]
+    targets     = " ".join(target_list)
 
     # ── build ────────────────────────────────────────────────────────────────
     build_dir = root / "build"
@@ -165,11 +167,13 @@ def cmd_generate(cwd: Path) -> None:
     if r.returncode != 0:
         _err("cmake configuration failed.")
 
-    # build only the new targets
+    # build only the new targets via cmake --build (works with any generator)
     nproc = os.cpu_count() or 1
-    target_list = targets.split()
     print(f"\n[makePhi] Building: {targets}")
-    r = subprocess.run(["make", f"-j{nproc}"] + target_list, cwd=build_dir)
+    build_cmd = ["cmake", "--build", str(build_dir),
+                 f"-j{nproc}",
+                 "--target"] + target_list
+    r = subprocess.run(build_cmd)
     if r.returncode != 0:
         _err("make failed.")
 
