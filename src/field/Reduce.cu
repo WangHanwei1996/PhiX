@@ -33,7 +33,7 @@ namespace {
 // thrust::transform_iterator so cub::DeviceReduce never touches ghost cells.
 // ---------------------------------------------------------------------------
 struct GatherBase {
-    const double* data;
+    const Real* data;
     int nx, ny, sx, sy, g;
 
     __host__ __device__ double fetch(int p) const {

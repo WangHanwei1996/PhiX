@@ -107,8 +107,8 @@ void FaceField::fill(double value) {
 // ---------------------------------------------------------------------------
 void FaceField::allocDevice() {
     if (d_data) return;  // already allocated
-    CUDA_CHECK(cudaMalloc(&d_data, storedSize * sizeof(double)));
-    CUDA_CHECK(cudaMemset(d_data, 0, storedSize * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_data, storedSize * sizeof(Real)));
+    CUDA_CHECK(cudaMemset(d_data, 0, storedSize * sizeof(Real)));
 }
 
 void FaceField::freeDevice() {
@@ -122,7 +122,7 @@ void FaceField::uploadToDevice() const {
     if (!d_data)
         throw std::runtime_error("FaceField::uploadToDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(d_data, data.data(),
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyHostToDevice));
 }
 
@@ -130,7 +130,7 @@ void FaceField::downloadFromDevice() {
     if (!d_data)
         throw std::runtime_error("FaceField::downloadFromDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(data.data(), d_data,
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyDeviceToHost));
 }
 

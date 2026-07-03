@@ -24,33 +24,33 @@ namespace PhiX {
 // VectorSolver self-contained without a shared internal header)
 // ===========================================================================
 
-__global__ void vsolv_axpy(double* dst, const double* src,
+__global__ void vsolv_axpy(Real* dst, const Real* src,
                             double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) dst[tid] += coeff * src[tid];
 }
 
-__global__ void vsolv_copy(double* dst, const double* src, int n)
+__global__ void vsolv_copy(Real* dst, const Real* src, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) dst[tid] = src[tid];
 }
 
-__global__ void vsolv_rk4_tmp(double*       phi_tmp,
-                               const double* phi,
-                               const double* k,
+__global__ void vsolv_rk4_tmp(Real*       phi_tmp,
+                               const Real* phi,
+                               const Real* k,
                                double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) phi_tmp[tid] = phi[tid] + coeff * k[tid];
 }
 
-__global__ void vsolv_rk4_update(double*       phi,
-                                  const double* k1,
-                                  const double* k2,
-                                  const double* k3,
-                                  const double* k4,
+__global__ void vsolv_rk4_update(Real*       phi,
+                                  const Real* k1,
+                                  const Real* k2,
+                                  const Real* k3,
+                                  const Real* k4,
                                   double dt6, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -146,13 +146,13 @@ void VectorSolver::eulerUpdateCPU() {
 // Helper: for all components, build phi_tmp[c] = phi[c] + coeff * k[c],
 //         apply BCs on phi_tmp, then swap d_curr pointers of unknown & phi_tmp.
 // Returns the saved original pointers so the caller can restore them.
-static std::vector<double*>
+static std::vector<Real*>
 prepAndSwapAll(VectorField& phi, VectorField& phi_tmp,
                VectorField* k, double coeff,
                std::vector<BoundaryCondition*>& bcs)
 {
     const int N = phi.nComponents();
-    std::vector<double*> orig(N);
+    std::vector<Real*> orig(N);
 
     // Build phi_tmp and optionally apply BCs
     for (int c = 0; c < N; ++c) {
@@ -178,7 +178,7 @@ prepAndSwapAll(VectorField& phi, VectorField& phi_tmp,
     return orig;
 }
 
-static void restoreAll(VectorField& phi, const std::vector<double*>& orig) {
+static void restoreAll(VectorField& phi, const std::vector<Real*>& orig) {
     for (int c = 0; c < phi.nComponents(); ++c)
         phi[c].d_curr = orig[c];
 }

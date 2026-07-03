@@ -52,7 +52,7 @@ ScalarField::ScalarField(const FieldLayout& layout_, const std::string& name_)
 // left empty; ownsDeviceMemory_ = false so destructor does not free.
 // ---------------------------------------------------------------------------
 ScalarField ScalarField::makeShell(const Mesh& mesh_, int ghost_,
-                                   double* d_buf,
+                                   Real* d_buf,
                                    const std::string& name_)
 {
     ScalarField f(FieldLayout(mesh_, ghost_), name_);
@@ -147,7 +147,7 @@ void ScalarField::advanceTimeLevelGPU() {
     if (!deviceAllocated())
         throw std::runtime_error("ScalarField::advanceTimeLevelGPU: device not allocated");
     CUDA_CHECK(cudaMemcpy(d_prev, d_curr,
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyDeviceToDevice));
 }
 
@@ -157,7 +157,7 @@ void ScalarField::advanceTimeLevelGPU() {
 
 void ScalarField::allocDevice() {
     if (deviceAllocated()) return;
-    const std::size_t bytes = storedSize * sizeof(double);
+    const std::size_t bytes = storedSize * sizeof(Real);
     CUDA_CHECK(cudaMalloc(&d_curr, bytes));
     CUDA_CHECK(cudaMalloc(&d_prev, bytes));
     // Initialise GPU memory to zero
@@ -178,7 +178,7 @@ void ScalarField::uploadCurrToDevice() const {
     if (!deviceAllocated())
         throw std::runtime_error("ScalarField::uploadCurrToDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(d_curr, curr.data(),
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyHostToDevice));
 }
 
@@ -186,7 +186,7 @@ void ScalarField::uploadPrevToDevice() const {
     if (!deviceAllocated())
         throw std::runtime_error("ScalarField::uploadPrevToDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(d_prev, prev.data(),
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyHostToDevice));
 }
 
@@ -199,7 +199,7 @@ void ScalarField::downloadCurrFromDevice() {
     if (!deviceAllocated())
         throw std::runtime_error("ScalarField::downloadCurrFromDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(curr.data(), d_curr,
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyDeviceToHost));
 }
 
@@ -207,7 +207,7 @@ void ScalarField::downloadPrevFromDevice() {
     if (!deviceAllocated())
         throw std::runtime_error("ScalarField::downloadPrevFromDevice: device not allocated");
     CUDA_CHECK(cudaMemcpy(prev.data(), d_prev,
-                          storedSize * sizeof(double),
+                          storedSize * sizeof(Real),
                           cudaMemcpyDeviceToHost));
 }
 

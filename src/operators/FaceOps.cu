@@ -51,8 +51,8 @@ int cell_idx(int i, int j, int k, int sx_c, int sy_c, int g)
 // Interior faces: arithmetic mean; boundary faces: nearest-cell value.
 // ---------------------------------------------------------------------------
 __global__ void kernel_interp(
-        double*       f_data,
-        const double* c_data,
+        Real*       f_data,
+        const Real* c_data,
         int lim0, int lim1, int lim2,
         int ax,
         int n_ax,               // = mesh.n[ax]
@@ -101,8 +101,8 @@ __global__ void kernel_interp(
 // Boundary faces (i_n=0) use ghost cell (valid if BCs have been applied).
 // ---------------------------------------------------------------------------
 __global__ void kernel_face_grad(
-        double*       f_data,
-        const double* c_data,
+        Real*       f_data,
+        const Real* c_data,
         int lim0, int lim1, int lim2,
         int ax,
         int sx_c, int sy_c,
@@ -136,10 +136,10 @@ __global__ void kernel_face_grad(
 // rhs[i,j,k] += coeff * divergence of face fluxes (conservative FV)
 // ---------------------------------------------------------------------------
 __global__ void kernel_div_face(
-        double*       rhs,
-        const double* fx,
-        const double* fy,
-        const double* fz,
+        Real*       rhs,
+        const Real* fx,
+        const Real* fy,
+        const Real* fz,
         double coeff,
         int nx, int ny, int nz,
         int sx_c, int sy_c,
@@ -341,7 +341,7 @@ Term divFace(const FaceField* fx,
                       sx_c, sy_c,
                       sx_fx, sy_fx, sx_fy, sy_fy, sx_fz, sy_fz,
                       ghost, inv_dx, inv_dy, inv_dz]
-                     (double* d_rhs, double c, ScratchPool& pool)
+                     (Real* d_rhs, double c, ScratchPool& pool)
     {
         if (fx && !fx->d_data)
             throw std::runtime_error("divFace GPU: flux_x not on device");
@@ -350,9 +350,9 @@ Term divFace(const FaceField* fx,
         if (fz && !fz->d_data)
             throw std::runtime_error("divFace GPU: flux_z not on device");
 
-        const double* dfx = fx ? fx->d_data : nullptr;
-        const double* dfy = fy ? fy->d_data : nullptr;
-        const double* dfz = fz ? fz->d_data : nullptr;
+        const Real* dfx = fx ? fx->d_data : nullptr;
+        const Real* dfy = fy ? fy->d_data : nullptr;
+        const Real* dfz = fz ? fz->d_data : nullptr;
 
         int total = nx * ny * nz;
         kernel_div_face<<<(total+255)/256, 256, 0, pool.stream>>>(
@@ -370,11 +370,11 @@ Term divFace(const FaceField* fx,
                     sx_c, sy_c,
                     sx_fx, sy_fx, sx_fy, sy_fy, sx_fz, sy_fz,
                     ghost, inv_dx, inv_dy, inv_dz]
-                   (double* rhs, double c, ScratchPool&)
+                   (Real* rhs, double c, ScratchPool&)
     {
-        const double* cfx = fx ? fx->data.data() : nullptr;
-        const double* cfy = fy ? fy->data.data() : nullptr;
-        const double* cfz = fz ? fz->data.data() : nullptr;
+        const Real* cfx = fx ? fx->data.data() : nullptr;
+        const Real* cfy = fy ? fy->data.data() : nullptr;
+        const Real* cfz = fz ? fz->data.data() : nullptr;
 
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)

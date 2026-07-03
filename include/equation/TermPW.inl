@@ -17,8 +17,8 @@ namespace PhiX {
 // ---------------------------------------------------------------------------
 template<typename Functor>
 __global__ void kernel_pw_accumulate(
-        double*       rhs,
-        const double* src,
+        Real*       rhs,
+        const Real* src,
         Functor       func,
         double        coeff,
         int nx, int ny, int nz,
@@ -42,9 +42,9 @@ __global__ void kernel_pw_accumulate(
 // ---------------------------------------------------------------------------
 template<typename Functor>
 __global__ void kernel_pw2_accumulate(
-        double*       rhs,
-        const double* src1,
-        const double* src2,
+        Real*       rhs,
+        const Real* src1,
+        const Real* src2,
         Functor       func,
         double        coeff,
         int nx, int ny, int nz,
@@ -68,10 +68,10 @@ __global__ void kernel_pw2_accumulate(
 // ---------------------------------------------------------------------------
 template<typename Functor>
 __global__ void kernel_pw3_accumulate(
-        double*       rhs,
-        const double* src1,
-        const double* src2,
-        const double* src3,
+        Real*       rhs,
+        const Real* src1,
+        const Real* src2,
+        const Real* src3,
         Functor       func,
         double        coeff,
         int nx, int ny, int nz,
@@ -109,8 +109,8 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
 
     // GPU launcher: host function that launches the templated kernel
     t.gpu_launcher = [func, pf, nx, ny, nz, sx, sy, g]
-                     (double* d_rhs, double c, ScratchPool& pool) mutable {
-        const double* d_src = pf->d_curr;
+                     (Real* d_rhs, double c, ScratchPool& pool) mutable {
+        const Real* d_src = pf->d_curr;
         if (!d_src)
             throw std::runtime_error(
                 "pw GPU: source field not on device");
@@ -127,8 +127,8 @@ Term pw(const ScalarField& f, Functor func, double coeff) {
 
     // CPU fallback (Functor::operator() must also work on host)
     t.cpu_kernel = [func, pf, nx, ny, nz, sx, sy, g]
-                   (double* rhs, double c, ScratchPool&) mutable {
-        const double* src = pf->curr.data();
+                   (Real* rhs, double c, ScratchPool&) mutable {
+        const Real* src = pf->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -170,9 +170,9 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
     const ScalarField* pf2 = &f2;
 
     t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2]
-                     (double* d_rhs, double c, ScratchPool& pool) mutable {
-        const double* d_src1 = pf1->d_curr;
-        const double* d_src2 = pf2->d_curr;
+                     (Real* d_rhs, double c, ScratchPool& pool) mutable {
+        const Real* d_src1 = pf1->d_curr;
+        const Real* d_src2 = pf2->d_curr;
         if (!d_src1 || !d_src2)
             throw std::runtime_error(
                 "pw(f1,f2) GPU: a field not on device. "
@@ -189,9 +189,9 @@ Term pw(const ScalarField& f1, const ScalarField& f2, Functor func, double coeff
     };
 
     t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf1, pf2]
-                   (double* rhs, double c, ScratchPool&) mutable {
-        const double* src1 = pf1->curr.data();
-        const double* src2 = pf2->curr.data();
+                   (Real* rhs, double c, ScratchPool&) mutable {
+        const Real* src1 = pf1->curr.data();
+        const Real* src2 = pf2->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -233,10 +233,10 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
     const ScalarField* pf3 = &f3;
 
     t.gpu_launcher = [func, nx, ny, nz, sx, sy, g, pf1, pf2, pf3]
-                     (double* d_rhs, double c, ScratchPool& pool) mutable {
-        const double* d_src1 = pf1->d_curr;
-        const double* d_src2 = pf2->d_curr;
-        const double* d_src3 = pf3->d_curr;
+                     (Real* d_rhs, double c, ScratchPool& pool) mutable {
+        const Real* d_src1 = pf1->d_curr;
+        const Real* d_src2 = pf2->d_curr;
+        const Real* d_src3 = pf3->d_curr;
         if (!d_src1 || !d_src2 || !d_src3)
             throw std::runtime_error(
                 "pw(f1,f2,f3) GPU: a field not on device.");
@@ -252,10 +252,10 @@ Term pw(const ScalarField& f1, const ScalarField& f2, const ScalarField& f3,
     };
 
     t.cpu_kernel = [func, nx, ny, nz, sx, sy, g, pf1, pf2, pf3]
-                   (double* rhs, double c, ScratchPool&) mutable {
-        const double* src1 = pf1->curr.data();
-        const double* src2 = pf2->curr.data();
-        const double* src3 = pf3->curr.data();
+                   (Real* rhs, double c, ScratchPool&) mutable {
+        const Real* src1 = pf1->curr.data();
+        const Real* src2 = pf2->curr.data();
+        const Real* src3 = pf3->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {

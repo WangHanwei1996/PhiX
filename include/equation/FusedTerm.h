@@ -70,9 +70,9 @@ namespace detail {
 
 struct StencilParams {
     int    sx, sy;              // storedDims[0], storedDims[1]
-    double inv_dx2;             // 1 / dx²
-    double inv_dy2;             // 1 / dy²  (0 if dim < 2)
-    double inv_dz2;             // 1 / dz²  (0 if dim < 3)
+    Real   inv_dx2;             // 1 / dx²
+    Real   inv_dy2;             // 1 / dy²  (0 if dim < 2)
+    Real   inv_dz2;             // 1 / dz²  (0 if dim < 3)
     int    dim;
 };
 
@@ -83,9 +83,9 @@ struct StencilParams {
 // FieldNode: d_data[c]  (value at stored index c)
 struct FieldNode {
     using fused_node_tag = FusedNodeTag;
-    const double* d_data;
+    const Real* d_data;
 
-    __host__ __device__ double eval(int c, const StencilParams&) const {
+    __host__ __device__ Real eval(int c, const StencilParams&) const {
         return d_data[c];
     }
 };
@@ -93,15 +93,15 @@ struct FieldNode {
 // LapNode: ∇²f at stored index c  (2nd-order central FD)
 struct LapNode {
     using fused_node_tag = FusedNodeTag;
-    const double* d_data;
+    const Real* d_data;
 
-    __host__ __device__ double eval(int c, const StencilParams& p) const {
-        double v = (d_data[c + 1] - 2.0 * d_data[c] + d_data[c - 1]) * p.inv_dx2;
+    __host__ __device__ Real eval(int c, const StencilParams& p) const {
+        Real v = (d_data[c + 1] - Real(2) * d_data[c] + d_data[c - 1]) * p.inv_dx2;
         if (p.dim >= 2)
-            v += (d_data[c + p.sx] - 2.0 * d_data[c] + d_data[c - p.sx]) * p.inv_dy2;
+            v += (d_data[c + p.sx] - Real(2) * d_data[c] + d_data[c - p.sx]) * p.inv_dy2;
         if (p.dim >= 3) {
             int ssz = p.sx * p.sy;
-            v += (d_data[c + ssz] - 2.0 * d_data[c] + d_data[c - ssz]) * p.inv_dz2;
+            v += (d_data[c + ssz] - Real(2) * d_data[c] + d_data[c - ssz]) * p.inv_dz2;
         }
         return v;
     }
@@ -110,21 +110,21 @@ struct LapNode {
 // GradDotNode: ∇f · ∇g at stored index c  (central FD, all active axes)
 struct GradDotNode {
     using fused_node_tag = FusedNodeTag;
-    const double* d_f;
-    const double* d_g;
+    const Real* d_f;
+    const Real* d_g;
 
-    __host__ __device__ double eval(int c, const StencilParams& p) const {
+    __host__ __device__ Real eval(int c, const StencilParams& p) const {
         // (df/dx) · (dg/dx) = [(f[c+1]-f[c-1]) * (g[c+1]-g[c-1])] / (4 dx²)
-        double v = (d_f[c + 1] - d_f[c - 1]) * (d_g[c + 1] - d_g[c - 1])
-                   * (0.25 * p.inv_dx2);
+        Real v = (d_f[c + 1] - d_f[c - 1]) * (d_g[c + 1] - d_g[c - 1])
+                   * (Real(0.25) * p.inv_dx2);
         if (p.dim >= 2) {
             v += (d_f[c + p.sx] - d_f[c - p.sx]) *
-                 (d_g[c + p.sx] - d_g[c - p.sx]) * (0.25 * p.inv_dy2);
+                 (d_g[c + p.sx] - d_g[c - p.sx]) * (Real(0.25) * p.inv_dy2);
         }
         if (p.dim >= 3) {
             int ssz = p.sx * p.sy;
             v += (d_f[c + ssz] - d_f[c - ssz]) *
-                 (d_g[c + ssz] - d_g[c - ssz]) * (0.25 * p.inv_dz2);
+                 (d_g[c + ssz] - d_g[c - ssz]) * (Real(0.25) * p.inv_dz2);
         }
         return v;
     }
@@ -139,9 +139,9 @@ template<typename Inner>
 struct ScaleNode {
     using fused_node_tag = FusedNodeTag;
     Inner  inner;
-    double coeff;
+    Real   coeff;
 
-    __host__ __device__ double eval(int c, const StencilParams& p) const {
+    __host__ __device__ Real eval(int c, const StencilParams& p) const {
         return coeff * inner.eval(c, p);
     }
 };
@@ -153,7 +153,7 @@ struct MulNode {
     Lhs lhs;
     Rhs rhs;
 
-    __host__ __device__ double eval(int c, const StencilParams& p) const {
+    __host__ __device__ Real eval(int c, const StencilParams& p) const {
         return lhs.eval(c, p) * rhs.eval(c, p);
     }
 };
@@ -165,7 +165,7 @@ struct AddNode {
     Lhs lhs;
     Rhs rhs;
 
-    __host__ __device__ double eval(int c, const StencilParams& p) const {
+    __host__ __device__ Real eval(int c, const StencilParams& p) const {
         return lhs.eval(c, p) + rhs.eval(c, p);
     }
 };
@@ -174,10 +174,10 @@ struct AddNode {
 template<typename Fn>
 struct Pw1Node {
     using fused_node_tag = FusedNodeTag;
-    const double* d_f;
+    const Real* d_f;
     Fn fn;
 
-    __host__ __device__ double eval(int c, const StencilParams&) const {
+    __host__ __device__ Real eval(int c, const StencilParams&) const {
         return fn(d_f[c]);
     }
 };
@@ -186,11 +186,11 @@ struct Pw1Node {
 template<typename Fn>
 struct Pw2Node {
     using fused_node_tag = FusedNodeTag;
-    const double* d_f1;
-    const double* d_f2;
+    const Real* d_f1;
+    const Real* d_f2;
     Fn fn;
 
-    __host__ __device__ double eval(int c, const StencilParams&) const {
+    __host__ __device__ Real eval(int c, const StencilParams&) const {
         return fn(d_f1[c], d_f2[c]);
     }
 };
@@ -253,11 +253,11 @@ inline Pw2Node<Fn> fpw2(const ScalarField& f1, const ScalarField& f2, Fn fn) {
 
 template<typename Expr>
 __global__ void kernel_fused_accumulate(
-        double* __restrict__ d_rhs,
+        Real* __restrict__ d_rhs,
         Expr expr,
         int nx, int ny, int nz,
         int sx, int sy, int g,
-        double inv_dx2, double inv_dy2, double inv_dz2,
+        Real inv_dx2, Real inv_dy2, Real inv_dz2,
         int dim)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -283,12 +283,12 @@ __global__ void kernel_fused_accumulate(
 
 template<typename E0, typename E1, typename E2>
 __global__ void kernel_fused_multi3(
-        double* __restrict__ d_out0, E0 e0,
-        double* __restrict__ d_out1, E1 e1,
-        double* __restrict__ d_out2, E2 e2,
+        Real* __restrict__ d_out0, E0 e0,
+        Real* __restrict__ d_out1, E1 e1,
+        Real* __restrict__ d_out2, E2 e2,
         int nx, int ny, int nz,
         int sx, int sy, int g,
-        double inv_dx2, double inv_dy2, double inv_dz2,
+        Real inv_dx2, Real inv_dy2, Real inv_dz2,
         int dim)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -398,7 +398,7 @@ public:
         // Wrap in a ScaleNode so the Term::coeff passed by computeRHS is
         // honoured correctly even if the user wraps the fused term.
         t.gpu_launcher = [expr, nx, ny, nz, sx, sy, g, inv_dx2, inv_dy2, inv_dz2, dim, total]
-                         (double* d_rhs, double coeff, ScratchPool& pool) {
+                         (Real* d_rhs, double coeff, ScratchPool& pool) {
             auto scaled = ScaleNode<Expr>{expr, coeff};
             int blocks  = (total + 255) / 256;
             kernel_fused_accumulate<ScaleNode<Expr>><<<blocks, 256, 0, pool.stream>>>(
@@ -411,7 +411,7 @@ public:
         };
 
         // CPU path not implemented for fused expressions.
-        t.cpu_kernel = [](double*, double, ScratchPool&) {
+        t.cpu_kernel = [](Real*, double, ScratchPool&) {
             throw std::runtime_error(
                 "FusedTerm: CPU fallback not implemented. "
                 "Use the standard DSL Terms for CPU execution.");

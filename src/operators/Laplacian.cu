@@ -22,8 +22,8 @@ namespace {
 
 template<typename Scheme>
 __global__ void kernel_lap_accumulate(
-        double*       rhs,
-        const double* src,
+        Real*       rhs,
+        const Real* src,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -68,8 +68,8 @@ Term makeLaplacianTerm(const ScalarField& f, double coeff) {
     const ScalarField* pf = &f;
 
     t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                     (double* d_rhs, double c, ScratchPool& pool) {
-        const double* d_src = pf->d_curr;
+                     (Real* d_rhs, double c, ScratchPool& pool) {
+        const Real* d_src = pf->d_curr;
         if (!d_src)
             throw std::runtime_error("lap GPU: source field not on device");
         int total = nx * ny * nz;
@@ -84,8 +84,8 @@ Term makeLaplacianTerm(const ScalarField& f, double coeff) {
     };
 
     t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* src = pf->curr.data();
+                   (Real* rhs, double c, ScratchPool&) {
+        const Real* src = pf->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {

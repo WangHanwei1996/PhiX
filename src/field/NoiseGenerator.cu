@@ -47,7 +47,7 @@ __global__ void k_noise_init_states(curandState* states,
 // ---------------------------------------------------------------------------
 // GAUSSIAN  d_curr[idx] += N(mean, std_dev^2)
 // ---------------------------------------------------------------------------
-__global__ void k_noise_gaussian(double* d_curr, curandState* states,
+__global__ void k_noise_gaussian(Real* d_curr, curandState* states,
                                   double mean, double std_dev,
                                   int n, int nx, int ny,
                                   int sx, int sy, int g)
@@ -65,7 +65,7 @@ __global__ void k_noise_gaussian(double* d_curr, curandState* states,
 // UNIFORM  d_curr[idx] += U[lo, hi]
 // curand_uniform_double returns (0, 1].
 // ---------------------------------------------------------------------------
-__global__ void k_noise_uniform(double* d_curr, curandState* states,
+__global__ void k_noise_uniform(Real* d_curr, curandState* states,
                                  double lo, double hi,
                                  int n, int nx, int ny,
                                  int sx, int sy, int g)
@@ -84,7 +84,7 @@ __global__ void k_noise_uniform(double* d_curr, curandState* states,
 // curand_log_normal_double(state, mu, sigma) generates X = exp(mu + sigma*Z)
 // where Z ~ N(0,1), so X ~ LogNormal with underlying N(mu, sigma^2).
 // ---------------------------------------------------------------------------
-__global__ void k_noise_log_normal(double* d_curr, curandState* states,
+__global__ void k_noise_log_normal(Real* d_curr, curandState* states,
                                     double mu, double sigma,
                                     int n, int nx, int ny,
                                     int sx, int sy, int g)
@@ -103,7 +103,7 @@ __global__ void k_noise_log_normal(double* d_curr, curandState* states,
 // Inverse CDF: X = location + scale * tan(pi * (U - 0.5))
 // where U ~ Uniform(0, 1].
 // ---------------------------------------------------------------------------
-__global__ void k_noise_cauchy(double* d_curr, curandState* states,
+__global__ void k_noise_cauchy(Real* d_curr, curandState* states,
                                 double location, double scale,
                                 int n, int nx, int ny,
                                 int sx, int sy, int g)
@@ -123,7 +123,7 @@ __global__ void k_noise_cauchy(double* d_curr, curandState* states,
 // Inverse CDF: X = -scale * log(U), where U ~ Uniform(0, 1].
 // Final sample = shift - scale * log(U)  (always >= shift).
 // ---------------------------------------------------------------------------
-__global__ void k_noise_exponential(double* d_curr, curandState* states,
+__global__ void k_noise_exponential(Real* d_curr, curandState* states,
                                      double shift, double scale,
                                      int n, int nx, int ny,
                                      int sx, int sy, int g)
@@ -141,7 +141,7 @@ __global__ void k_noise_exponential(double* d_curr, curandState* states,
 // ---------------------------------------------------------------------------
 // BERNOULLI  d_curr[idx] += (U <= p) ? +amplitude : -amplitude
 // ---------------------------------------------------------------------------
-__global__ void k_noise_bernoulli(double* d_curr, curandState* states,
+__global__ void k_noise_bernoulli(Real* d_curr, curandState* states,
                                    double amplitude, double p,
                                    int n, int nx, int ny,
                                    int sx, int sy, int g)

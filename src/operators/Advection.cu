@@ -13,17 +13,17 @@ namespace {
 // Upwind directional derivative along one axis, selected by velocity sign.
 // ---------------------------------------------------------------------------
 __host__ __device__ inline
-double upwind_d1(const double* s, int c, int stride, double inv_d, double u) {
+double upwind_d1(const Real* s, int c, int stride, double inv_d, double u) {
     return (u > 0.0) ? (s[c] - s[c - stride]) * inv_d
                      : (s[c + stride] - s[c]) * inv_d;
 }
 
 __global__ void kernel_adv_accumulate(
-        double*       rhs,
-        const double* src,
-        const double* ux,
-        const double* uy,
-        const double* uz,
+        Real*       rhs,
+        const Real* src,
+        const Real* ux,
+        const Real* uy,
+        const Real* uz,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -81,7 +81,7 @@ Term adv(const VectorField& u, const ScalarField& f, double coeff) {
 
     t.gpu_launcher = [pf, pux, puy, puz, nx, ny, nz, sx, sy, g, dim,
                       inv_dx, inv_dy, inv_dz]
-                     (double* d_rhs, double c, ScratchPool& pool) {
+                     (Real* d_rhs, double c, ScratchPool& pool) {
         if (!pf->d_curr || !pux->d_curr)
             throw std::runtime_error("adv GPU: source/velocity not on device");
         int total = nx * ny * nz;
@@ -96,11 +96,11 @@ Term adv(const VectorField& u, const ScalarField& f, double coeff) {
 
     t.cpu_kernel = [pf, pux, puy, puz, nx, ny, nz, sx, sy, g, dim,
                     inv_dx, inv_dy, inv_dz]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* src = pf->curr.data();
-        const double* vx  = pux->curr.data();
-        const double* vy  = puy->curr.data();
-        const double* vz  = puz->curr.data();
+                   (Real* rhs, double c, ScratchPool&) {
+        const Real* src = pf->curr.data();
+        const Real* vx  = pux->curr.data();
+        const Real* vy  = puy->curr.data();
+        const Real* vz  = puz->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {

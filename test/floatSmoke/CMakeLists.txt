@@ -1,0 +1,4 @@
+add_executable(float_smoke test_float_smoke.cu)
+target_link_libraries(float_smoke PRIVATE phix)
+set_target_properties(float_smoke PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME float_smoke COMMAND float_smoke)

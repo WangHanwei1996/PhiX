@@ -44,8 +44,8 @@ namespace PhiX {
 // Only physical cells are written in `rhs`.
 // ---------------------------------------------------------------------------
 __global__ void kernel_lap_accumulate(
-        double*       rhs,
-        const double* src,
+        Real*       rhs,
+        const Real* src,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,          // storedDims[0], storedDims[1]
@@ -93,8 +93,8 @@ __global__ void kernel_lap_accumulate(
 //   df/dx ≈ (f[i+1] - f[i-1]) / (2*dx)
 // ---------------------------------------------------------------------------
 __global__ void kernel_grad_accumulate(
-        double*       rhs,
-        const double* src,
+        Real*       rhs,
+        const Real* src,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -131,8 +131,8 @@ __global__ void kernel_grad_accumulate(
 
 // Iso9 gradient kernel — used by iso_grad(Term/RHSExpr, ...) overload.
 __global__ void kernel_iso9_grad_accumulate(
-        double*       rhs,
-        const double* src,
+        Real*       rhs,
+        const Real* src,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -180,9 +180,9 @@ Term iso_grad(const ScalarField& f, int axis, double coeff) {
 // Both fields must share the same mesh, storedDims, and ghost width.
 // ===========================================================================
 __global__ void kernel_grad_dot_accumulate(
-        double*       rhs,
-        const double* src_f,
-        const double* src_g,
+        Real*       rhs,
+        const Real* src_f,
+        const Real* src_g,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -252,9 +252,9 @@ Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff) {
     const ScalarField* pg = &g;
 
     t.gpu_launcher = [pf, pg, nx, ny, nz, sx, sy, gh, dim, inv_2dx, inv_2dy, inv_2dz]
-                     (double* d_rhs, double c, ScratchPool& pool) {
-        const double* d_f = pf->d_curr;
-        const double* d_g = pg->d_curr;
+                     (Real* d_rhs, double c, ScratchPool& pool) {
+        const Real* d_f = pf->d_curr;
+        const Real* d_g = pg->d_curr;
         if (!d_f || !d_g)
             throw std::runtime_error(
                 "grad_dot GPU: a field not on device");
@@ -269,9 +269,9 @@ Term grad_dot(const ScalarField& f, const ScalarField& g, double coeff) {
     };
 
     t.cpu_kernel = [pf, pg, nx, ny, nz, sx, sy, gh, dim, inv_2dx, inv_2dy, inv_2dz]
-                   (double* rhs, double c, ScratchPool&) {
-        const double* f_data = pf->curr.data();
-        const double* g_data = pg->curr.data();
+                   (Real* rhs, double c, ScratchPool&) {
+        const Real* f_data = pf->curr.data();
+        const Real* g_data = pg->curr.data();
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -360,7 +360,7 @@ void Equation::computeRHS(ScalarField& rhs) const {
     if (eval_plan_) {
         if (eval_plan_->empty())
             throw std::runtime_error("Equation::computeRHS: EvalPlan is empty (call setRHS first)");
-        CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(double), stream_));
+        CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(Real), stream_));
         scratch_pool_.reset();
         scratch_pool_.stream = stream_;
         eval_plan_->execute(rhs, scratch_pool_);
@@ -372,7 +372,7 @@ void Equation::computeRHS(ScalarField& rhs) const {
         throw std::runtime_error("Equation::computeRHS: RHS not set (call setRHS first)");
 
     // Zero the whole stored array asynchronously.
-    CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(double), stream_));
+    CUDA_CHECK(cudaMemsetAsync(rhs.d_curr, 0, rhs.storedSize * sizeof(Real), stream_));
 
     scratch_pool_.reset();
     scratch_pool_.stream = stream_;
@@ -465,29 +465,29 @@ VectorRHSExpr curl(const VectorField& vf, double coeff) {
 // ===========================================================================
 
 ScratchPool::~ScratchPool() {
-    for (double* p : dev_bufs_) {
+    for (Real* p : dev_bufs_) {
         if (p) cudaFree(p);
     }
 }
 
-double* ScratchPool::acquireDevice(std::size_t size) {
+Real* ScratchPool::acquireDevice(std::size_t size) {
     if (next_dev_ < dev_bufs_.size()) {
         if (dev_sizes_[next_dev_] < size) {
             cudaFree(dev_bufs_[next_dev_]);
-            CUDA_CHECK(cudaMalloc(&dev_bufs_[next_dev_], size * sizeof(double)));
+            CUDA_CHECK(cudaMalloc(&dev_bufs_[next_dev_], size * sizeof(Real)));
             dev_sizes_[next_dev_] = size;
         }
         return dev_bufs_[next_dev_++];
     }
-    double* p = nullptr;
-    CUDA_CHECK(cudaMalloc(&p, size * sizeof(double)));
+    Real* p = nullptr;
+    CUDA_CHECK(cudaMalloc(&p, size * sizeof(Real)));
     dev_bufs_.push_back(p);
     dev_sizes_.push_back(size);
     ++next_dev_;
     return p;
 }
 
-double* ScratchPool::acquireHost(std::size_t size) {
+Real* ScratchPool::acquireHost(std::size_t size) {
     if (next_host_ < host_bufs_.size()) {
         if (host_bufs_[next_host_].size() < size)
             host_bufs_[next_host_].assign(size, 0.0);
@@ -504,9 +504,9 @@ double* ScratchPool::acquireHost(std::size_t size) {
 // ===========================================================================
 
 __global__ void kernel_mul_accumulate(
-        double*       rhs,
-        const double* s1,
-        const double* s2,
+        Real*       rhs,
+        const Real* s1,
+        const Real* s2,
         double        coeff,
         int nx, int ny, int nz,
         int sx, int sy,
@@ -557,10 +557,10 @@ const ScalarField* repField(const RHSExpr& e) {
 // Materialise an RHSExpr into d_buf on GPU.  d_buf must have been allocated
 // to at least storedSize doubles; it is zeroed first.
 void materialiseGPU(const RHSExpr& expr,
-                    double* d_buf, std::size_t storedSize,
+                    Real* d_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
-    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(double), pool.stream));
+    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(Real), pool.stream));
     for (const auto& t : expr.terms) {
         if (!t.gpu_launcher)
             throw std::runtime_error(
@@ -569,17 +569,17 @@ void materialiseGPU(const RHSExpr& expr,
     }
 }
 void materialiseGPU(const Term& t,
-                    double* d_buf, std::size_t storedSize,
+                    Real* d_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
-    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(double), pool.stream));
+    CUDA_CHECK(cudaMemsetAsync(d_buf, 0, storedSize * sizeof(Real), pool.stream));
     if (!t.gpu_launcher)
         throw std::runtime_error("Composite GPU: Term has no GPU launcher");
     t.gpu_launcher(d_buf, t.coeff, pool);
 }
 
 void materialiseCPU(const RHSExpr& expr,
-                    double* h_buf, std::size_t storedSize,
+                    Real* h_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
     std::fill(h_buf, h_buf + storedSize, 0.0);
@@ -591,7 +591,7 @@ void materialiseCPU(const RHSExpr& expr,
     }
 }
 void materialiseCPU(const Term& t,
-                    double* h_buf, std::size_t storedSize,
+                    Real* h_buf, std::size_t storedSize,
                     ScratchPool& pool)
 {
     std::fill(h_buf, h_buf + storedSize, 0.0);
@@ -613,8 +613,8 @@ void materialiseCPU(const Term& t,
 namespace detail {
 
 // Launch mul_accumulate kernel.  Public to FieldOps.inl via detail::.
-void mulAccumulateGPU(double* d_rhs,
-                      const double* d_s1, const double* d_s2,
+void mulAccumulateGPU(Real* d_rhs,
+                      const Real* d_s1, const Real* d_s2,
                       double coeff,
                       int nx, int ny, int nz,
                       int sx, int sy, int g,
@@ -631,8 +631,8 @@ void mulAccumulateGPU(double* d_rhs,
             std::string("mul_accumulate GPU error: ") + cudaGetErrorString(err));
 }
 
-void mulAccumulateCPU(double* rhs,
-                      const double* s1, const double* s2,
+void mulAccumulateCPU(Real* rhs,
+                      const Real* s1, const Real* s2,
                       double coeff,
                       int nx, int ny, int nz,
                       int sx, int sy, int g)
@@ -660,9 +660,9 @@ static Term makeStencilOnExprTerm(
         SrcExpr             src_expr,
         const ScalarField&  layout,                                // for mesh/ghost/storedSize
         std::vector<BoundaryCondition*> bcs,
-        std::function<void(double* /*rhs*/, const double* /*src*/,
+        std::function<void(Real* /*rhs*/, const Real* /*src*/,
                            double /*coeff*/, ScratchPool& /*pool*/)> gpu_op,
-        std::function<void(double* /*rhs*/, const double* /*src*/,
+        std::function<void(Real* /*rhs*/, const Real* /*src*/,
                            double /*coeff*/)> cpu_op,
         TermType  out_type,
         int       out_axis,
@@ -681,9 +681,9 @@ static Term makeStencilOnExprTerm(
 
     out.gpu_launcher = [src_expr, pmesh, ghost, storedSize, bcs,
                         gpu_op]
-                       (double* d_rhs, double c, ScratchPool& pool) {
+                       (Real* d_rhs, double c, ScratchPool& pool) {
         // 1. Allocate / reuse scratch
-        double* d_scratch = pool.acquireDevice(storedSize);
+        Real* d_scratch = pool.acquireDevice(storedSize);
 
         // 2. Evaluate src_expr into d_scratch (zeros first)
         detail::materialiseGPU(src_expr, d_scratch, storedSize, pool);
@@ -698,8 +698,8 @@ static Term makeStencilOnExprTerm(
 
     out.cpu_kernel = [src_expr, pmesh, ghost, storedSize, bcs,
                       cpu_op]
-                     (double* rhs, double c, ScratchPool& pool) {
-        double* h_scratch = pool.acquireHost(storedSize);
+                     (Real* rhs, double c, ScratchPool& pool) {
+        Real* h_scratch = pool.acquireHost(storedSize);
         detail::materialiseCPU(src_expr, h_scratch, storedSize, pool);
 
         // CPU BCs require a CPU-resident ScalarField; build one and copy in.
@@ -730,7 +730,7 @@ static Term lapOnExpr(SrcExpr src_expr, const ScalarField& layout,
     double inv_dz2 = (dim >= 3) ? 1.0 / (layout.mesh.d[2] * layout.mesh.d[2]) : 0.0;
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
+                  (Real* d_rhs, const Real* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
         kernel_lap_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim,
@@ -742,7 +742,7 @@ static Term lapOnExpr(SrcExpr src_expr, const ScalarField& layout,
     };
 
     auto cpu_op = [nx, ny, nz, sx, sy, g, dim, inv_dx2, inv_dy2, inv_dz2]
-                  (double* rhs, const double* src, double c) {
+                  (Real* rhs, const Real* src, double c) {
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -787,7 +787,7 @@ static Term gradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     double inv_2d = 0.5 / layout.mesh.d[axis];
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, axis, inv_2d]
-                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
+                  (Real* d_rhs, const Real* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
         kernel_grad_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, axis, inv_2d);
@@ -798,7 +798,7 @@ static Term gradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     };
 
     auto cpu_op = [nx, ny, nz, sx, sy, g, axis, inv_2d]
-                  (double* rhs, const double* src, double c) {
+                  (Real* rhs, const Real* src, double c) {
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -889,7 +889,7 @@ static Term isoGradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     double inv_dz = (dim >= 3) ? 1.0 / layout.mesh.d[2] : 0.0;
 
     auto gpu_op = [nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
-                  (double* d_rhs, const double* d_src, double c, ScratchPool& pool) {
+                  (Real* d_rhs, const Real* d_src, double c, ScratchPool& pool) {
         int total = nx * ny * nz;
         kernel_iso9_grad_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
             d_rhs, d_src, c, nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz);
@@ -900,7 +900,7 @@ static Term isoGradOnExpr(SrcExpr src_expr, const ScalarField& layout, int axis,
     };
 
     auto cpu_op = [nx, ny, nz, sx, sy, g, dim, axis, inv_dx, inv_dy, inv_dz]
-                  (double* rhs, const double* src, double c) {
+                  (Real* rhs, const Real* src, double c) {
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
@@ -930,7 +930,7 @@ Term iso_grad(const RHSExpr& e, int axis,
 // ===========================================================================
 
 // GPU kernel: dst[i] += coeff * src[i]  (scale-accumulate over full stored array)
-__global__ void kernel_eq_axpy(double* dst, const double* src, double coeff, int n)
+__global__ void kernel_eq_axpy(Real* dst, const Real* src, double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) dst[tid] += coeff * src[tid];

@@ -11,22 +11,22 @@ struct CD2 {
 
     // --- Separable per-axis primitives (stride-based) ---------------------
     __host__ __device__
-    static double d1(const double* s, int c, int stride, double inv_d) {
-        return (s[c + stride] - s[c - stride]) * 0.5 * inv_d;
+    static Real d1(const Real* s, int c, int stride, Real inv_d) {
+        return (s[c + stride] - s[c - stride]) * Real(0.5) * inv_d;
     }
 
     __host__ __device__
-    static double d2(const double* s, int c, int stride, double inv_d2) {
-        return (s[c + stride] - 2.0 * s[c] + s[c - stride]) * inv_d2;
+    static Real d2(const Real* s, int c, int stride, Real inv_d2) {
+        return (s[c + stride] - Real(2) * s[c] + s[c - stride]) * inv_d2;
     }
 
     // --- Full-operator stencils (used by operator factories) -------------
     // Standard separable Laplacian: sum of second derivatives over axes.
     __host__ __device__
-    static double laplacian(const double* s, int c,
+    static Real laplacian(const Real* s, int c,
                             int sx, int sy, int dim,
-                            double inv_dx2, double inv_dy2, double inv_dz2) {
-        double val = d2(s, c, 1, inv_dx2);
+                            Real inv_dx2, Real inv_dy2, Real inv_dz2) {
+        Real val = d2(s, c, 1, inv_dx2);
         if (dim >= 2) val += d2(s, c, sx, inv_dy2);
         if (dim >= 3) val += d2(s, c, sx * sy, inv_dz2);
         return val;
@@ -34,11 +34,11 @@ struct CD2 {
 
     // Standard 3-point central gradient along `axis`.
     __host__ __device__
-    static double gradient(const double* s, int c, int axis,
+    static Real gradient(const Real* s, int c, int axis,
                            int sx, int sy, int /*dim*/,
-                           double inv_dx, double inv_dy, double inv_dz) {
+                           Real inv_dx, Real inv_dy, Real inv_dz) {
         int    stride = (axis == 0) ? 1 : (axis == 1) ? sx : sx * sy;
-        double inv_d  = (axis == 0) ? inv_dx : (axis == 1) ? inv_dy : inv_dz;
+        Real inv_d  = (axis == 0) ? inv_dx : (axis == 1) ? inv_dy : inv_dz;
         return d1(s, c, stride, inv_d);
     }
 };
@@ -59,33 +59,33 @@ struct CD4 {
     static constexpr const char* name() { return "CD4"; }
 
     __host__ __device__
-    static double d1(const double* s, int c, int stride, double inv_d) {
-        return (s[c - 2*stride] - 8.0*s[c - stride]
-              + 8.0*s[c + stride] - s[c + 2*stride]) * inv_d / 12.0;
+    static Real d1(const Real* s, int c, int stride, Real inv_d) {
+        return (s[c - 2*stride] - Real(8)*s[c - stride]
+              + Real(8)*s[c + stride] - s[c + 2*stride]) * inv_d / Real(12);
     }
 
     __host__ __device__
-    static double d2(const double* s, int c, int stride, double inv_d2) {
-        return (-s[c - 2*stride] + 16.0*s[c - stride] - 30.0*s[c]
-              + 16.0*s[c + stride] - s[c + 2*stride]) * inv_d2 / 12.0;
+    static Real d2(const Real* s, int c, int stride, Real inv_d2) {
+        return (-s[c - 2*stride] + Real(16)*s[c - stride] - Real(30)*s[c]
+              + Real(16)*s[c + stride] - s[c + 2*stride]) * inv_d2 / Real(12);
     }
 
     __host__ __device__
-    static double laplacian(const double* s, int c,
+    static Real laplacian(const Real* s, int c,
                             int sx, int sy, int dim,
-                            double inv_dx2, double inv_dy2, double inv_dz2) {
-        double val = d2(s, c, 1, inv_dx2);
+                            Real inv_dx2, Real inv_dy2, Real inv_dz2) {
+        Real val = d2(s, c, 1, inv_dx2);
         if (dim >= 2) val += d2(s, c, sx, inv_dy2);
         if (dim >= 3) val += d2(s, c, sx * sy, inv_dz2);
         return val;
     }
 
     __host__ __device__
-    static double gradient(const double* s, int c, int axis,
+    static Real gradient(const Real* s, int c, int axis,
                            int sx, int sy, int /*dim*/,
-                           double inv_dx, double inv_dy, double inv_dz) {
+                           Real inv_dx, Real inv_dy, Real inv_dz) {
         int    stride = (axis == 0) ? 1 : (axis == 1) ? sx : sx * sy;
-        double inv_d  = (axis == 0) ? inv_dx : (axis == 1) ? inv_dy : inv_dz;
+        Real inv_d  = (axis == 0) ? inv_dx : (axis == 1) ? inv_dy : inv_dz;
         return d1(s, c, stride, inv_d);
     }
 };

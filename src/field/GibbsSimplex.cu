@@ -38,7 +38,7 @@ namespace PhiX {
 // registers.  nPhase is a runtime value; max supported = 32.
 // ---------------------------------------------------------------------------
 __global__ void k_gibbs_simplex_N(
-    double** d_fields,
+    Real** d_fields,
     int nPhase,
     int nx, int ny, int nz,
     int sx, int sy,
@@ -52,7 +52,7 @@ __global__ void k_gibbs_simplex_N(
     int idx = (ix + g) + sx * ((iy + g) + sy * (iz + g));
 
     // Read into local array (max 32 phases)
-    double phi[32];
+    Real phi[32];
     for (int i = 0; i < nPhase; ++i)
         phi[i] = d_fields[i][idx];
 
@@ -113,14 +113,14 @@ static void launch(const std::vector<ScalarField*>& fields)
     }
 
     // Build a host-side array of device pointers, copy it to the device
-    std::vector<double*> h_ptrs(nPhase);
+    std::vector<Real*> h_ptrs(nPhase);
     for (int i = 0; i < nPhase; ++i)
         h_ptrs[i] = fields[i]->d_curr;
 
-    double** d_ptrs = nullptr;
-    GS_CUDA_CHECK(cudaMalloc(&d_ptrs, nPhase * sizeof(double*)));
+    Real** d_ptrs = nullptr;
+    GS_CUDA_CHECK(cudaMalloc(&d_ptrs, nPhase * sizeof(Real*)));
     GS_CUDA_CHECK(cudaMemcpy(d_ptrs, h_ptrs.data(),
-                             nPhase * sizeof(double*),
+                             nPhase * sizeof(Real*),
                              cudaMemcpyHostToDevice));
 
     // Grid covers interior cells (ghost cells are left untouched)

@@ -33,7 +33,7 @@ int facepw_idx(int i, int j, int k, int ax, int sx, int sy, int g)
 
 // 1-field
 template<typename Fn>
-__global__ void kernel_facepw1(double* out, const double* a,
+__global__ void kernel_facepw1(Real* out, const Real* a,
                                 Fn fn,
                                 int lim0, int lim1, int lim2,
                                 int ax, int sx, int sy, int g)
@@ -51,8 +51,8 @@ __global__ void kernel_facepw1(double* out, const double* a,
 
 // 2-field
 template<typename Fn>
-__global__ void kernel_facepw2(double* out,
-                                const double* a, const double* b,
+__global__ void kernel_facepw2(Real* out,
+                                const Real* a, const Real* b,
                                 Fn fn,
                                 int lim0, int lim1, int lim2,
                                 int ax, int sx, int sy, int g)
@@ -70,8 +70,8 @@ __global__ void kernel_facepw2(double* out,
 
 // 3-field
 template<typename Fn>
-__global__ void kernel_facepw3(double* out,
-                                const double* a, const double* b, const double* c,
+__global__ void kernel_facepw3(Real* out,
+                                const Real* a, const Real* b, const Real* c,
                                 Fn fn,
                                 int lim0, int lim1, int lim2,
                                 int ax, int sx, int sy, int g)
@@ -136,8 +136,8 @@ void facePW(FaceField& out, const FaceField& a, Fn fn)
     lim[ax] += 1;
     const int sx = out.storedDims[0], sy = out.storedDims[1];
 
-    const double* ad = a.data.data();
-    double*       od = out.data.data();
+    const Real* ad = a.data.data();
+    Real*       od = out.data.data();
 
     for (int k = 0; k < lim[2]; ++k)
     for (int j = 0; j < lim[1]; ++j)
@@ -159,9 +159,9 @@ void facePW(FaceField& out, const FaceField& a, const FaceField& b, Fn fn)
     lim[ax] += 1;
     const int sx = out.storedDims[0], sy = out.storedDims[1];
 
-    const double* ad = a.data.data();
-    const double* bd = b.data.data();
-    double*       od = out.data.data();
+    const Real* ad = a.data.data();
+    const Real* bd = b.data.data();
+    Real*       od = out.data.data();
 
     for (int k = 0; k < lim[2]; ++k)
     for (int j = 0; j < lim[1]; ++j)
@@ -184,10 +184,10 @@ void facePW(FaceField& out,
     lim[ax] += 1;
     const int sx = out.storedDims[0], sy = out.storedDims[1];
 
-    const double* ad = a.data.data();
-    const double* bd = b.data.data();
-    const double* cd = c.data.data();
-    double*       od = out.data.data();
+    const Real* ad = a.data.data();
+    const Real* bd = b.data.data();
+    const Real* cd = c.data.data();
+    Real*       od = out.data.data();
 
     for (int k = 0; k < lim[2]; ++k)
     for (int j = 0; j < lim[1]; ++j)

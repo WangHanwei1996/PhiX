@@ -16,6 +16,7 @@
 //   VectorRHSExpr curlV = curl(v);      // curl(VectorField) -> VectorRHSExpr (3D)
 // ---------------------------------------------------------------------------
 
+#include "core/Real.h"
 #include "field/ScalarField.h"
 #include "field/VectorField.h"
 
@@ -50,8 +51,8 @@ public:
     ScratchPool(const ScratchPool&)            = delete;
     ScratchPool& operator=(const ScratchPool&) = delete;
 
-    double* acquireDevice(std::size_t size);
-    double* acquireHost  (std::size_t size);
+    Real* acquireDevice(std::size_t size);
+    Real* acquireHost  (std::size_t size);
 
     void reset() { next_dev_ = 0; next_host_ = 0; }
 
@@ -61,11 +62,11 @@ public:
     cudaStream_t stream = nullptr;
 
 private:
-    std::vector<double*>             dev_bufs_;
+    std::vector<Real*>               dev_bufs_;
     std::vector<std::size_t>         dev_sizes_;
     std::size_t                      next_dev_  = 0;
 
-    std::vector<std::vector<double>> host_bufs_;
+    std::vector<std::vector<Real>>   host_bufs_;
     std::size_t                      next_host_ = 0;
 };
 
@@ -82,7 +83,7 @@ private:
 // reset once per Equation::computeRHS call.  Simple Terms (lap, grad, pw)
 // ignore it.
 // ---------------------------------------------------------------------------
-using TermLauncher = std::function<void(double* /*rhs*/,
+using TermLauncher = std::function<void(Real* /*rhs*/,
                                         double /*coeff*/,
                                         ScratchPool& /*pool*/)>;
 

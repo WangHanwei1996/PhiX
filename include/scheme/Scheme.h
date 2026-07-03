@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Real.h"
 namespace PhiX::scheme {
 
 // Marker namespace for finite-difference / finite-volume stencil schemes.

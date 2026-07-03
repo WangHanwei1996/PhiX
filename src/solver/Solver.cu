@@ -29,7 +29,7 @@ namespace PhiX {
 // Euler update:  dst[i] += coeff * src[i]   (scale-accumulate)
 // Used both for Euler (coeff = dt) and inside RK4 stage assembly.
 // ---------------------------------------------------------------------------
-__global__ void kernel_axpy(double* dst, const double* src,
+__global__ void kernel_axpy(Real* dst, const Real* src,
                              double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -39,7 +39,7 @@ __global__ void kernel_axpy(double* dst, const double* src,
 // ---------------------------------------------------------------------------
 // Copy:  dst[i] = src[i]
 // ---------------------------------------------------------------------------
-__global__ void kernel_copy(double* dst, const double* src, int n)
+__global__ void kernel_copy(Real* dst, const Real* src, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) dst[tid] = src[tid];
@@ -48,9 +48,9 @@ __global__ void kernel_copy(double* dst, const double* src, int n)
 // ---------------------------------------------------------------------------
 // RK4 phi_tmp assembly:  phi_tmp = phi + coeff * k_i
 // ---------------------------------------------------------------------------
-__global__ void kernel_rk4_tmp(double*       phi_tmp,
-                                const double* phi,
-                                const double* k,
+__global__ void kernel_rk4_tmp(Real*       phi_tmp,
+                                const Real* phi,
+                                const Real* k,
                                 double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -60,11 +60,11 @@ __global__ void kernel_rk4_tmp(double*       phi_tmp,
 // ---------------------------------------------------------------------------
 // RK4 final update:  phi += (dt/6)*(k1 + 2*k2 + 2*k3 + k4)
 // ---------------------------------------------------------------------------
-__global__ void kernel_rk4_update(double*       phi,
-                                   const double* k1,
-                                   const double* k2,
-                                   const double* k3,
-                                   const double* k4,
+__global__ void kernel_rk4_update(Real*       phi,
+                                   const Real* k1,
+                                   const Real* k2,
+                                   const Real* k3,
+                                   const Real* k4,
                                    double dt6, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -194,7 +194,7 @@ void Solver::eulerUpdateCPU() {
 // Helper: copy phi into phi_tmp then apply BCs on phi_tmp
 static void prepTmpGPU(ScalarField& phi_tmp, const ScalarField& phi,
                         std::vector<BoundaryCondition*>& bcs,
-                        const double* k, double coeff)
+                        const Real* k, double coeff)
 {
     int n = static_cast<int>(phi.storedSize);
     if (k && coeff != 0.0) {
@@ -227,7 +227,7 @@ void Solver::rk4AdvanceGPU() {
         // compute method with phi_tmp_.d_curr as the source for RHS.
         // Because Equation::computeRHS uses term.field->d_curr, we need
         // to temporarily swap the device pointer of unknown.
-        double* orig_ptr = saved.d_curr;
+        Real* orig_ptr = saved.d_curr;
         saved.d_curr     = phi_tmp_.d_curr;
         equation_.computeRHS(k2_);
         saved.d_curr = orig_ptr;
@@ -236,7 +236,7 @@ void Solver::rk4AdvanceGPU() {
     // k3 = f(phi + dt/2 * k2)
     prepTmpGPU(phi_tmp_, phi, bcs_, k2_.d_curr, dt2);
     {
-        double* orig_ptr = phi.d_curr;
+        Real* orig_ptr = phi.d_curr;
         phi.d_curr       = phi_tmp_.d_curr;
         equation_.computeRHS(k3_);
         phi.d_curr = orig_ptr;
@@ -245,7 +245,7 @@ void Solver::rk4AdvanceGPU() {
     // k4 = f(phi + dt * k3)
     prepTmpGPU(phi_tmp_, phi, bcs_, k3_.d_curr, dt);
     {
-        double* orig_ptr = phi.d_curr;
+        Real* orig_ptr = phi.d_curr;
         phi.d_curr       = phi_tmp_.d_curr;
         equation_.computeRHS(k4_);
         phi.d_curr = orig_ptr;
@@ -382,8 +382,8 @@ static double maxAbsPhysicalCPU(const ScalarField& f) {
     for (int k = 0; k < f.mesh.n[2]; ++k)
     for (int j = 0; j < f.mesh.n[1]; ++j)
     for (int i = 0; i < f.mesh.n[0]; ++i)
-        m = std::max(m, std::fabs(
-                f.curr[static_cast<std::size_t>(f.index(i, j, k))]));
+        m = std::max(m, static_cast<double>(std::fabs(
+                f.curr[static_cast<std::size_t>(f.index(i, j, k))])));
     return m;
 }
 

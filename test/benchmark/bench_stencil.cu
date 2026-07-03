@@ -30,7 +30,8 @@ using namespace PhiX;
 static void report(const std::string& label, int N, double msPerIter) {
     const double cells  = static_cast<double>(N) * N;
     const double mcps   = cells / (msPerIter * 1e3);            // Mcells/s
-    const double gbps   = cells * 3.0 * 8.0 / (msPerIter * 1e6); // ~3 doubles/cell
+    const double gbps   = cells * 3.0 * sizeof(Real)
+                          / (msPerIter * 1e6);                  // ~3 Reals/cell
     std::printf("  %-12s N=%5d   %8.3f ms/iter   %9.1f Mcells/s   ~%6.1f GB/s\n",
                 label.c_str(), N, msPerIter, mcps, gbps);
 }
@@ -94,7 +95,8 @@ int main(int argc, char**) {
     const int warmup = 5;
     const int iters  = 50;
 
-    std::printf("bench_stencil (double precision, 2D)\n");
+    std::printf("bench_stencil (Real = %s, 2D)\n",
+                sizeof(Real) == 8 ? "double" : "float");
     for (int N : {512, 1024}) {
         report("lap CD2",    N, timeComputeRHS(N, "CD2", 1, warmup, iters));
         report("lap CD4",    N, timeComputeRHS(N, "CD4", 2, warmup, iters));

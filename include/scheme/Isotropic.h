@@ -33,13 +33,13 @@ struct Iso9 {
 
     // Per-axis d1 fallback (CD2); used when dim != 2 or axis >= 2.
     __host__ __device__
-    static double d1(const double* s, int c, int stride, double inv_d) {
+    static Real d1(const Real* s, int c, int stride, Real inv_d) {
         return CD2::d1(s, c, stride, inv_d);
     }
 
     // Per-axis d2 fallback (CD2).
     __host__ __device__
-    static double d2(const double* s, int c, int stride, double inv_d2) {
+    static Real d2(const Real* s, int c, int stride, Real inv_d2) {
         return CD2::d2(s, c, stride, inv_d2);
     }
 
@@ -49,9 +49,9 @@ struct Iso9 {
     // performance — callers are responsible.
     // -------------------------------------------------------------------------
     __host__ __device__
-    static double laplacian(const double* s, int c,
+    static Real laplacian(const Real* s, int c,
                             int sx, int /*sy*/, int dim,
-                            double inv_dx2, double inv_dy2, double inv_dz2) {
+                            Real inv_dx2, Real inv_dy2, Real inv_dz2) {
         if (dim == 2) {
             // Isotropic 9-point (Mehrstellen / Patra-Karttunen) weights:
             //   [4·(face sum) + (corner sum) − 20·center] / (6·dx²)
@@ -61,12 +61,12 @@ struct Iso9 {
             //   (face/2 + corner/4 − 3c)·(2/(3dx²))
             // form converged to (2/3)·∇² (zeroth-order inconsistent), caught
             // by the convergence suite.
-            double center  = s[c];
-            double face    = s[c + 1]      + s[c - 1]
+            Real center  = s[c];
+            Real face    = s[c + 1]      + s[c - 1]
                            + s[c + sx]     + s[c - sx];
-            double corner  = s[c + 1 + sx] + s[c - 1 + sx]
+            Real corner  = s[c + 1 + sx] + s[c - 1 + sx]
                            + s[c + 1 - sx] + s[c - 1 - sx];
-            return (4.0 * face + corner - 20.0 * center) / 6.0 * inv_dx2;
+            return (Real(4) * face + corner - Real(20) * center) / Real(6) * inv_dx2;
         }
         // fallback
         return CD2::laplacian(s, c, sx, /*sy will be unused in 1D*/ 1, dim,
@@ -77,30 +77,30 @@ struct Iso9 {
     // Isotropic 9-point gradient along `axis` (2D only).  Falls back for 1D/3D.
     // -------------------------------------------------------------------------
     __host__ __device__
-    static double gradient(const double* s, int c, int axis,
+    static Real gradient(const Real* s, int c, int axis,
                            int sx, int sy, int dim,
-                           double inv_dx, double inv_dy, double inv_dz) {
+                           Real inv_dx, Real inv_dy, Real inv_dz) {
         if (dim == 2 && axis <= 1) {
             if (axis == 0) {
-                double inv_12dx = inv_dx / 12.0;
+                Real inv_12dx = inv_dx / Real(12);
                 int xp_jm = c + 1 - sx;
                 int xp_j  = c + 1;
                 int xp_jp = c + 1 + sx;
                 int xm_jm = c - 1 - sx;
                 int xm_j  = c - 1;
                 int xm_jp = c - 1 + sx;
-                return (4.0 * (s[xp_j] - s[xm_j])
+                return (Real(4) * (s[xp_j] - s[xm_j])
                            + (s[xp_jp] - s[xm_jp])
                            + (s[xp_jm] - s[xm_jm])) * inv_12dx;
             } else {
-                double inv_12dy = inv_dy / 12.0;
+                Real inv_12dy = inv_dy / Real(12);
                 int xm_yp = c - 1 + sx;
                 int x_yp  = c     + sx;
                 int xp_yp = c + 1 + sx;
                 int xm_ym = c - 1 - sx;
                 int x_ym  = c     - sx;
                 int xp_ym = c + 1 - sx;
-                return (4.0 * (s[x_yp] - s[x_ym])
+                return (Real(4) * (s[x_yp] - s[x_ym])
                            + (s[xp_yp] - s[xp_ym])
                            + (s[xm_yp] - s[xm_ym])) * inv_12dy;
             }

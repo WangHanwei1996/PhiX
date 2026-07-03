@@ -4,6 +4,7 @@
 #include "mesh/Mesh.h"
 
 #include <string>
+#include "core/Real.h"
 #include <vector>
 #include <cstddef>
 #include <stdexcept>
@@ -56,12 +57,12 @@ public:
     // -----------------------------------------------------------------------
     // CPU storage
     // -----------------------------------------------------------------------
-    std::vector<double> data;  // current face values
+    std::vector<Real> data;  // current face values
 
     // -----------------------------------------------------------------------
     // GPU storage (nullptr until allocDevice())
     // -----------------------------------------------------------------------
-    double* d_data = nullptr;
+    Real* d_data = nullptr;
 
     // -----------------------------------------------------------------------
     // Construction

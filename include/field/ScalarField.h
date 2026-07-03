@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Real.h"
 #include "field/FieldLayout.h"
 #include "mesh/Mesh.h"
 #include "IO/FieldFormat.h"
@@ -47,14 +48,14 @@ public:
     // -----------------------------------------------------------------------
     // CPU storage
     // -----------------------------------------------------------------------
-    std::vector<double> curr;   // current  time level
-    std::vector<double> prev;   // previous time level
+    std::vector<Real> curr;   // current  time level
+    std::vector<Real> prev;   // previous time level
 
     // -----------------------------------------------------------------------
     // GPU storage (nullptr until allocDevice() is called)
     // -----------------------------------------------------------------------
-    double* d_curr = nullptr;
-    double* d_prev = nullptr;
+    Real* d_curr = nullptr;
+    Real* d_prev = nullptr;
 
     // -----------------------------------------------------------------------
     // Construction / destruction
@@ -76,7 +77,7 @@ public:
     // BoundaryCondition::applyOnGPU interface.
     // -----------------------------------------------------------------------
     static ScalarField makeShell(const Mesh& mesh, int ghost,
-                                 double* d_buf,
+                                 Real* d_buf,
                                  const std::string& name = "shell");
 
     // Non-copyable (owns GPU memory)

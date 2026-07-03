@@ -88,7 +88,7 @@ static PatchParams makePatchParams(const ScalarField& f, const Patch& p) {
 // Periodic kernel (single patch handles BOTH sides of its axis)
 // ---------------------------------------------------------------------------
 __global__ void kernel_periodic(
-        double* data,
+        Real* data,
         int t0_count, int t1_count,
         int t0_stride, int t1_stride,
         int t0_lo,     int t1_lo,
@@ -117,7 +117,7 @@ __global__ void kernel_periodic(
 // NoFlux (zero-gradient) kernel — single side determined by `is_low`
 // ---------------------------------------------------------------------------
 __global__ void kernel_noflux(
-        double* data,
+        Real* data,
         int t0_count, int t1_count,
         int t0_stride, int t1_stride,
         int t0_lo,     int t1_lo,
@@ -151,7 +151,7 @@ __global__ void kernel_noflux(
 // Fixed (Dirichlet) kernel — single side determined by `is_low`
 // ---------------------------------------------------------------------------
 __global__ void kernel_fixed(
-        double* data,
+        Real* data,
         int t0_count, int t1_count,
         int t0_stride, int t1_stride,
         int t0_lo,     int t1_lo,
@@ -184,7 +184,7 @@ __global__ void kernel_fixed(
 // CPU helpers (mirror of device kernels)
 // ===========================================================================
 
-static void cpu_periodic(double* data, const PatchParams& pp) {
+static void cpu_periodic(Real* data, const PatchParams& pp) {
     for (int s0 = 0; s0 < pp.t0_count; ++s0)
     for (int s1 = 0; s1 < pp.t1_count; ++s1) {
         int face_off = (pp.t0_lo + s0) * pp.t0_stride
@@ -200,7 +200,7 @@ static void cpu_periodic(double* data, const PatchParams& pp) {
     }
 }
 
-static void cpu_noflux(double* data, const PatchParams& pp, bool is_low) {
+static void cpu_noflux(Real* data, const PatchParams& pp, bool is_low) {
     for (int s0 = 0; s0 < pp.t0_count; ++s0)
     for (int s1 = 0; s1 < pp.t1_count; ++s1) {
         int face_off = (pp.t0_lo + s0) * pp.t0_stride
@@ -221,7 +221,7 @@ static void cpu_noflux(double* data, const PatchParams& pp, bool is_low) {
     }
 }
 
-static void cpu_fixed(double* data, const PatchParams& pp,
+static void cpu_fixed(Real* data, const PatchParams& pp,
                       bool is_low, double value) {
     for (int s0 = 0; s0 < pp.t0_count; ++s0)
     for (int s1 = 0; s1 < pp.t1_count; ++s1) {

@@ -19,6 +19,20 @@ endif()
 # ---------------------------------------------------------------------------
 option(PHIX_LINEINFO    "Add -lineinfo to CUDA compiles (profiling)" OFF)
 option(PHIX_ENABLE_NVTX "Enable NVTX ranges (perf/Perf.h)"           OFF)
+
+# ---------------------------------------------------------------------------
+# Precision policy (core/Real.h)
+#   DOUBLE (default): Real = double — full test suite + applications
+#   FLOAT           : Real = float  — library + float smoke tests + benchmark
+#                     (apps and 1e-12-tolerance suites are not configured)
+# ---------------------------------------------------------------------------
+set(PHIX_PRECISION "DOUBLE" CACHE STRING "Field scalar type: DOUBLE or FLOAT")
+if(PHIX_PRECISION STREQUAL "FLOAT")
+    add_compile_definitions(PHIX_REAL_FLOAT)
+    message(STATUS "PhiX: FLOAT precision build (Real = float)")
+elseif(NOT PHIX_PRECISION STREQUAL "DOUBLE")
+    message(FATAL_ERROR "PHIX_PRECISION must be DOUBLE or FLOAT (got '${PHIX_PRECISION}')")
+endif()
 if(PHIX_LINEINFO)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
@@ -105,17 +119,18 @@ set_target_properties(phix PROPERTIES
 )
 
 # ---------------------------------------------------------------------------
-# Module tests
+# Module tests + convergence suite (DOUBLE builds only — tolerances assume
+# double precision); float smoke tests replace them in FLOAT builds
 # ---------------------------------------------------------------------------
-add_subdirectory(test/moduleTest)
+if(PHIX_PRECISION STREQUAL "DOUBLE")
+    add_subdirectory(test/moduleTest)
+    add_subdirectory(test/convergence)
+else()
+    add_subdirectory(test/floatSmoke)
+endif()
 
 # ---------------------------------------------------------------------------
-# Convergence-order verification (MMS-style refinement studies)
-# ---------------------------------------------------------------------------
-add_subdirectory(test/convergence)
-
-# ---------------------------------------------------------------------------
-# Performance benchmarks
+# Performance benchmarks (both precisions)
 # ---------------------------------------------------------------------------
 add_subdirectory(test/benchmark)
 
@@ -126,13 +141,13 @@ add_subdirectory(test/benchmark)
 # add_subdirectory(tutorials/quickstart)
 
 # ---------------------------------------------------------------------------
-# Sample tests
+# Sample tests + Applications (DOUBLE builds only — solver sources use
+# double-typed host code and double-calibrated tolerances)
 # ---------------------------------------------------------------------------
+if(PHIX_PRECISION STREQUAL "DOUBLE")
+
 add_subdirectory(test/sampleTest)
 
-# ---------------------------------------------------------------------------
-# Applications
-# ---------------------------------------------------------------------------
 # add_subdirectory("applications/solvers/glass_formation/2D")
 # add_subdirectory("applications/solvers/GFA/verification0")
 add_subdirectory("applications/solvers/dendrite_growth/2D")
@@ -147,3 +162,5 @@ add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 add_subdirectory("applications/solvers/GFA_binary")
 add_subdirectory("applications/solvers/GFA_FeB")
+
+endif()

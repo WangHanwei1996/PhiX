@@ -29,7 +29,7 @@ namespace PhiX {
 // ===========================================================================
 
 // dst[i] += coeff * src[i]
-__global__ static void eqsys_axpy(double* dst, const double* src,
+__global__ static void eqsys_axpy(Real* dst, const Real* src,
                                    double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -37,9 +37,9 @@ __global__ static void eqsys_axpy(double* dst, const double* src,
 }
 
 // phi_tmp[i] = phi[i] + coeff * k[i]
-__global__ static void eqsys_rk4_tmp(double*       phi_tmp,
-                                      const double* phi,
-                                      const double* k,
+__global__ static void eqsys_rk4_tmp(Real*       phi_tmp,
+                                      const Real* phi,
+                                      const Real* k,
                                       double coeff, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -47,11 +47,11 @@ __global__ static void eqsys_rk4_tmp(double*       phi_tmp,
 }
 
 // phi[i] += (dt/6) * (k1 + 2*k2 + 2*k3 + k4)[i]
-__global__ static void eqsys_rk4_update(double*       phi,
-                                         const double* k1,
-                                         const double* k2,
-                                         const double* k3,
-                                         const double* k4,
+__global__ static void eqsys_rk4_update(Real*       phi,
+                                         const Real* k1,
+                                         const Real* k2,
+                                         const Real* k3,
+                                         const Real* k4,
                                          double dt6, int n)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -199,8 +199,8 @@ void EquationSystem::eulerAdvanceCPU_()
             for (int k = 0; k < f.mesh.n[2]; ++k)
             for (int j = 0; j < f.mesh.n[1]; ++j)
             for (int i = 0; i < f.mesh.n[0]; ++i)
-                rate = std::max(rate, std::fabs(
-                    f.curr[static_cast<std::size_t>(f.index(i, j, k))]));
+                rate = std::max(rate, static_cast<double>(std::fabs(
+                    f.curr[static_cast<std::size_t>(f.index(i, j, k))])));
         }
         adapt_.lastMaxRate = rate;
         dt = adapt_.propose(dt, rate);
@@ -254,13 +254,13 @@ void EquationSystem::rk4AdvanceGPU_()
     // Apply BCs to phi_tmp (temporarily swap d_curr so bc->applyOnGPU works)
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
-        double* orig = sf.d_curr;
+        Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
         for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
         sf.d_curr = orig;
     }
     // Swap d_curr of each unknown to phi_tmp, compute all RHS, restore
-    std::vector<double*> saved(N);
+    std::vector<Real*> saved(N);
     for (std::size_t i = 0; i < N; ++i) {
         saved[i] = entries_[i].equation->unknown.d_curr;
         entries_[i].equation->unknown.d_curr = phi_tmp_[i]->d_curr;
@@ -282,7 +282,7 @@ void EquationSystem::rk4AdvanceGPU_()
     CUDA_CHECK(cudaDeviceSynchronize());
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
-        double* orig = sf.d_curr;
+        Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
         for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
         sf.d_curr = orig;
@@ -308,7 +308,7 @@ void EquationSystem::rk4AdvanceGPU_()
     CUDA_CHECK(cudaDeviceSynchronize());
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
-        double* orig = sf.d_curr;
+        Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
         for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
         sf.d_curr = orig;

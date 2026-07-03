@@ -27,22 +27,22 @@ namespace PhiX {
 // Forward declarations of the mul_accumulate helpers (defined in
 // src/equation/Equation.cu).  Used by Term/RHSExpr multiplication overloads.
 namespace detail {
-void mulAccumulateGPU(double* d_rhs,
-                      const double* d_s1, const double* d_s2,
+void mulAccumulateGPU(Real* d_rhs,
+                      const Real* d_s1, const Real* d_s2,
                       double coeff,
                       int nx, int ny, int nz,
                       int sx, int sy, int g,
                       cudaStream_t stream);
-void mulAccumulateCPU(double* rhs,
-                      const double* s1, const double* s2,
+void mulAccumulateCPU(Real* rhs,
+                      const Real* s1, const Real* s2,
                       double coeff,
                       int nx, int ny, int nz,
                       int sx, int sy, int g);
 
-void materialiseGPU(const RHSExpr&, double*, std::size_t, ScratchPool&);
-void materialiseGPU(const Term&,    double*, std::size_t, ScratchPool&);
-void materialiseCPU(const RHSExpr&, double*, std::size_t, ScratchPool&);
-void materialiseCPU(const Term&,    double*, std::size_t, ScratchPool&);
+void materialiseGPU(const RHSExpr&, Real*, std::size_t, ScratchPool&);
+void materialiseGPU(const Term&,    Real*, std::size_t, ScratchPool&);
+void materialiseCPU(const RHSExpr&, Real*, std::size_t, ScratchPool&);
+void materialiseCPU(const Term&,    Real*, std::size_t, ScratchPool&);
 
 const ScalarField* repField(const Term&);
 const ScalarField* repField(const RHSExpr&);
@@ -152,20 +152,20 @@ inline Term termTimesField(LhsExpr lhs,
     const ScalarField* pf = &field;
 
     out.gpu_launcher = [lhs, pf, nx, ny, nz, sx, sy, g, storedSize]
-                       (double* d_rhs, double c, ScratchPool& pool) {
-        double* d_scratch = pool.acquireDevice(storedSize);
+                       (Real* d_rhs, double c, ScratchPool& pool) {
+        Real* d_scratch = pool.acquireDevice(storedSize);
         materialiseGPU(lhs, d_scratch, storedSize, pool);
-        const double* d_f = pf->d_curr;
+        const Real* d_f = pf->d_curr;
         if (!d_f)
             throw std::runtime_error("Term*Field GPU: field not on device");
         mulAccumulateGPU(d_rhs, d_scratch, d_f, c, nx, ny, nz, sx, sy, g, pool.stream);
     };
 
     out.cpu_kernel = [lhs, pf, nx, ny, nz, sx, sy, g, storedSize]
-                     (double* rhs, double c, ScratchPool& pool) {
-        double* h_scratch = pool.acquireHost(storedSize);
+                     (Real* rhs, double c, ScratchPool& pool) {
+        Real* h_scratch = pool.acquireHost(storedSize);
         materialiseCPU(lhs, h_scratch, storedSize, pool);
-        const double* h_f = pf->curr.data();
+        const Real* h_f = pf->curr.data();
         mulAccumulateCPU(rhs, h_scratch, h_f, c, nx, ny, nz, sx, sy, g);
     };
     return out;
@@ -189,19 +189,19 @@ inline Term termTimesTerm(LhsExpr lhs, RhsExpr rhs,
     std::size_t storedSize = layout.storedSize;
 
     out.gpu_launcher = [lhs, rhs, nx, ny, nz, sx, sy, g, storedSize]
-                       (double* d_rhs, double c, ScratchPool& pool) {
-        double* s1 = pool.acquireDevice(storedSize);
+                       (Real* d_rhs, double c, ScratchPool& pool) {
+        Real* s1 = pool.acquireDevice(storedSize);
         materialiseGPU(lhs, s1, storedSize, pool);
-        double* s2 = pool.acquireDevice(storedSize);
+        Real* s2 = pool.acquireDevice(storedSize);
         materialiseGPU(rhs, s2, storedSize, pool);
         mulAccumulateGPU(d_rhs, s1, s2, c, nx, ny, nz, sx, sy, g, pool.stream);
     };
 
     out.cpu_kernel = [lhs, rhs, nx, ny, nz, sx, sy, g, storedSize]
-                     (double* h_rhs, double c, ScratchPool& pool) {
-        double* s1 = pool.acquireHost(storedSize);
+                     (Real* h_rhs, double c, ScratchPool& pool) {
+        Real* s1 = pool.acquireHost(storedSize);
         materialiseCPU(lhs, s1, storedSize, pool);
-        double* s2 = pool.acquireHost(storedSize);
+        Real* s2 = pool.acquireHost(storedSize);
         materialiseCPU(rhs, s2, storedSize, pool);
         mulAccumulateCPU(h_rhs, s1, s2, c, nx, ny, nz, sx, sy, g);
     };
@@ -230,8 +230,8 @@ inline Term pw(const Term& t, Functor func, double coeff) {
     out.field = layout;
 
     out.gpu_launcher = [t, func, nx, ny, nz, sx, sy, g, storedSize]
-                       (double* d_rhs, double c, ScratchPool& pool) {
-        double* d_scratch = pool.acquireDevice(storedSize);
+                       (Real* d_rhs, double c, ScratchPool& pool) {
+        Real* d_scratch = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t, d_scratch, storedSize, pool);
         int total = nx * ny * nz;
         kernel_pw_accumulate<Functor><<<(total + 255) / 256, 256>>>(
@@ -243,8 +243,8 @@ inline Term pw(const Term& t, Functor func, double coeff) {
     };
 
     out.cpu_kernel = [t, func, nx, ny, nz, sx, sy, g, storedSize]
-                     (double* rhs, double c, ScratchPool& pool) {
-        double* h_scratch = pool.acquireHost(storedSize);
+                     (Real* rhs, double c, ScratchPool& pool) {
+        Real* h_scratch = pool.acquireHost(storedSize);
         detail::materialiseCPU(t, h_scratch, storedSize, pool);
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
@@ -272,10 +272,10 @@ inline Term pw(const Term& t1, const Term& t2, Functor func, double coeff) {
     out.field = layout;
 
     out.gpu_launcher = [t1, t2, func, nx, ny, nz, sx, sy, g, storedSize]
-                       (double* d_rhs, double c, ScratchPool& pool) {
-        double* s1 = pool.acquireDevice(storedSize);
+                       (Real* d_rhs, double c, ScratchPool& pool) {
+        Real* s1 = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t1, s1, storedSize, pool);
-        double* s2 = pool.acquireDevice(storedSize);
+        Real* s2 = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t2, s2, storedSize, pool);
         int total = nx * ny * nz;
         kernel_pw2_accumulate<Functor><<<(total + 255) / 256, 256>>>(
@@ -287,10 +287,10 @@ inline Term pw(const Term& t1, const Term& t2, Functor func, double coeff) {
     };
 
     out.cpu_kernel = [t1, t2, func, nx, ny, nz, sx, sy, g, storedSize]
-                     (double* rhs, double c, ScratchPool& pool) {
-        double* h1 = pool.acquireHost(storedSize);
+                     (Real* rhs, double c, ScratchPool& pool) {
+        Real* h1 = pool.acquireHost(storedSize);
         detail::materialiseCPU(t1, h1, storedSize, pool);
-        double* h2 = pool.acquireHost(storedSize);
+        Real* h2 = pool.acquireHost(storedSize);
         detail::materialiseCPU(t2, h2, storedSize, pool);
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
@@ -318,12 +318,12 @@ inline Term pw(const Term& t1, const Term& t2, const Term& t3, Functor func, dou
     out.field = layout;
 
     out.gpu_launcher = [t1, t2, t3, func, nx, ny, nz, sx, sy, g, storedSize]
-                       (double* d_rhs, double c, ScratchPool& pool) {
-        double* s1 = pool.acquireDevice(storedSize);
+                       (Real* d_rhs, double c, ScratchPool& pool) {
+        Real* s1 = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t1, s1, storedSize, pool);
-        double* s2 = pool.acquireDevice(storedSize);
+        Real* s2 = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t2, s2, storedSize, pool);
-        double* s3 = pool.acquireDevice(storedSize);
+        Real* s3 = pool.acquireDevice(storedSize);
         detail::materialiseGPU(t3, s3, storedSize, pool);
         int total = nx * ny * nz;
         kernel_pw3_accumulate<Functor><<<(total + 255) / 256, 256>>>(
@@ -335,12 +335,12 @@ inline Term pw(const Term& t1, const Term& t2, const Term& t3, Functor func, dou
     };
 
     out.cpu_kernel = [t1, t2, t3, func, nx, ny, nz, sx, sy, g, storedSize]
-                     (double* rhs, double c, ScratchPool& pool) {
-        double* h1 = pool.acquireHost(storedSize);
+                     (Real* rhs, double c, ScratchPool& pool) {
+        Real* h1 = pool.acquireHost(storedSize);
         detail::materialiseCPU(t1, h1, storedSize, pool);
-        double* h2 = pool.acquireHost(storedSize);
+        Real* h2 = pool.acquireHost(storedSize);
         detail::materialiseCPU(t2, h2, storedSize, pool);
-        double* h3 = pool.acquireHost(storedSize);
+        Real* h3 = pool.acquireHost(storedSize);
         detail::materialiseCPU(t3, h3, storedSize, pool);
         for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
