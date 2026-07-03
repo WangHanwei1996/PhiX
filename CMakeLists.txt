@@ -119,6 +119,7 @@ add_library(phix STATIC
     src/lbm/LBM.cu
     src/diagnostics/Interface.cu
     src/mechanics/ElasticityFFT.cu
+    src/field/DomainMask.cu
 )
 
 target_include_directories(phix PUBLIC

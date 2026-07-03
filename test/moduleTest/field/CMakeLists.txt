@@ -16,3 +16,8 @@ add_executable(module_energy test_energy.cu)
 target_link_libraries(module_energy PRIVATE phix)
 set_target_properties(module_energy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_energy COMMAND module_energy)
+
+add_executable(module_mask test_mask.cu)
+target_link_libraries(module_mask PRIVATE phix)
+set_target_properties(module_mask PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_mask COMMAND module_mask)
