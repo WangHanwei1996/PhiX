@@ -235,5 +235,83 @@ int main() {
                 "transport: discrete sum not conserved");
     }
 
+    // =======================================================================
+    // 4. Iso27: 3D isotropic Laplacian is EXACT on quadratics
+    // =======================================================================
+    {
+        const int N = 12;
+        Mesh mesh = Mesh::makeUniform3D(CoordSys::CARTESIAN,
+                                        N, 0.1, 0.0, N, 0.1, 0.0, N, 0.1, 0.0);
+        ScalarField f(mesh, "f", 1);
+        for (int k = -1; k <= N; ++k)
+        for (int j = -1; j <= N; ++j)
+        for (int i = -1; i <= N; ++i) {
+            const double x = mesh.coord(0, i), y = mesh.coord(1, j),
+                         z = mesh.coord(2, k);
+            f.curr[static_cast<std::size_t>(f.index(i, j, k))] =
+                x * x + 2.0 * y * y + 3.0 * z * z + 0.5 * x - y + 0.1;
+        }
+        f.allocDevice();
+        f.uploadAllToDevice();
+
+        Equation eq(f, "iso27");
+        eq.setRHS(lap(f, "Iso27", 1.0));
+        ScalarField rhs(mesh, "rhs", 1);
+        rhs.allocDevice();
+        eq.computeRHS(rhs);
+        rhs.downloadCurrFromDevice();
+
+        for (int k = 0; k < N; ++k)
+        for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i)
+            require(std::fabs(rhs.curr[static_cast<std::size_t>(
+                        rhs.index(i, j, k))] - 12.0) < 1e-9,
+                    "Iso27 not exact on quadratic (lap should be 12)");
+    }
+
+    // =======================================================================
+    // 5. WENO5 step transport: essentially non-oscillatory
+    // =======================================================================
+    {
+        const int    N  = 64;
+        const double dx = 1.0 / N;
+        const double u0 = 1.0, dt = 0.4 * dx / u0;
+        Mesh mesh = Mesh::makeUniform1D(CoordSys::CARTESIAN, N, dx);
+
+        ScalarField phi(mesh, "phi", 3);
+        for (int i = -3; i < N + 3; ++i)
+            phi.curr[static_cast<std::size_t>(phi.index(i))] =
+                (i >= N / 4 && i < N / 2) ? 1.0 : 0.0;
+        phi.allocDevice();
+        phi.uploadAllToDevice();
+
+        VectorField u(mesh, "u", 1, 3);
+        for (int i = -3; i < N + 3; ++i)
+            u[0].curr[static_cast<std::size_t>(u[0].index(i))] = u0;
+        u[0].allocDevice();
+        u[0].uploadAllToDevice();
+
+        Equation eq(phi, "weno");
+        eq.setRHS(adv(u, phi, "WENO5", -1.0));
+        PeriodicBC bcW(mesh.facePatch(Axis::X, Side::LOW));
+        Solver solver(eq, {&bcW}, dt, TimeScheme::EULER);
+        solver.run(80);
+
+        phi.downloadCurrFromDevice();
+        double mn = 1e300, mx = -1e300, sum = 0.0;
+        for (int i = 0; i < N; ++i) {
+            const double v = phi.curr[static_cast<std::size_t>(phi.index(i))];
+            mn = std::min(mn, v); mx = std::max(mx, v); sum += v;
+        }
+        require(mn > -5e-3 && mx < 1.0 + 5e-3,
+                "WENO5 produced significant over/undershoot");
+        // The HJ-WENO derivative form is NOT a conservative flux difference
+        // (nonlinear weights break telescoping) — mass is preserved only
+        // approximately, at the scheme's truncation level.
+        require(std::fabs(sum - N / 4.0) < 5e-3 * (N / 4.0),
+                "WENO5 mass drift beyond truncation level: "
+                + std::to_string(sum - N / 4.0));
+    }
+
     return 0;
 }

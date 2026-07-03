@@ -26,10 +26,29 @@
 #include "field/ScalarField.h"
 #include "field/VectorField.h"
 
+#include <string>
+
 namespace PhiX {
 
-// coeff · (u · ∇f), first-order upwind.  u must have >= mesh.dim components
-// on the same mesh as f.
+// coeff · (u · ∇f).  u must have >= mesh.dim components on the same mesh.
+// Default scheme: UW1 (1st-order donor cell, ghost 1).
 Term adv(const VectorField& u, const ScalarField& f, double coeff = 1.0);
+
+// Scheme-selectable variant:
+//   "UW1"   1st-order donor cell            (ghost 1, monotone)
+//   "UW2"   2nd-order one-sided upwind      (ghost 2, may over/undershoot
+//                                            at discontinuities)
+//   "WENO5" 5th-order HJ-WENO (Jiang-Shu)   (ghost 3, essentially
+//                                            non-oscillatory, 5th order on
+//                                            smooth fields)
+//
+// Conservation note: all three approximate the DERIVATIVE u·∇f (the
+// Hamilton-Jacobi form).  UW1's linear one-sided differences telescope, so
+// constant-u periodic transport conserves Σf exactly; UW2/WENO5 do not
+// (WENO's nonlinear weights break telescoping) — mass is preserved only to
+// truncation accuracy.  For strictly conservative transport put the flux
+// through the face-flux chain (FaceOps) instead.
+Term adv(const VectorField& u, const ScalarField& f,
+         const std::string& schemeName, double coeff = 1.0);
 
 } // namespace PhiX

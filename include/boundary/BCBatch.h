@@ -14,6 +14,15 @@
 // can run concurrently inside one kernel with no ordering hazards — the
 // previous sequential launches never relied on order either.
 //
+// CORNER GHOSTS (v2.24.0): a second kernel pass re-runs each descriptor
+// with its tangential range extended into the ghost bands of HIGHER axes
+// (x-BCs extend into y/z ghosts, y-BCs into z) — after pass 1 those bands
+// hold valid values, so the corner cells receive the correct composition
+// (periodic corners = diagonal periodic images, no-flux corners = mirrored
+// edge ghosts).  Diagonal-reading stencils (Iso9/Iso27, anisoDiv) are then
+// correct up to the boundary.  The per-BC sequential path does NOT fill
+// corners (unchanged legacy behaviour).
+//
 // Supported subclasses: PeriodicBC, NoFluxBC, FixedBC (identified via
 // dynamic_cast at build()).  Any other BoundaryCondition subclass is kept
 // on a fallback list and applied with its own applyOnGPU after the batched
@@ -45,6 +54,7 @@ struct BCDesc {
     int  t0_stride, t1_stride;
     int  t0_lo, t1_lo;
     int  axis_stride, n_axis, ghost;
+    int  ext0, ext1;              // corner pass: extend tangential range
     Real value;                   // fixed only
 };
 
@@ -79,6 +89,7 @@ private:
     BCDesc* d_descs_ = nullptr;
     int     nDesc_   = 0;
     int     maxT0_   = 0, maxT1_ = 0;
+    bool    hasExt_  = false;   // any descriptor extends into corners
     bool    built_   = false;
 };
 

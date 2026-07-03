@@ -52,13 +52,24 @@ static void fillField(ScalarField& f) {
     f.uploadAllToDevice();
 }
 
-static double maxDiff(ScalarField& a, ScalarField& b) {
+// Bitwise comparison over all stored cells EXCEPT the corner-ghost regions
+// (cells outside the physical range in >= 2 axes): since v2.24.0 the batch
+// fills corners (second kernel pass) while the sequential per-BC path never
+// did — corners are checked separately for self-consistency.
+static double maxDiffNonCorner(ScalarField& a, ScalarField& b) {
     a.downloadCurrFromDevice();
     b.downloadCurrFromDevice();
+    const int g = a.ghost, nx = a.mesh.n[0], ny = a.mesh.n[1];
     double m = 0.0;
-    for (std::size_t i = 0; i < a.storedSize; ++i)
+    for (int j = -g; j < ny + g; ++j)
+    for (int i = -g; i < nx + g; ++i) {
+        const bool gi = (i < 0 || i >= nx), gj = (j < 0 || j >= ny);
+        if (gi && gj) continue;   // corner region
+        const std::size_t idx = static_cast<std::size_t>(a.index(i, j));
         m = std::max(m, std::fabs(
-            static_cast<double>(a.curr[i]) - static_cast<double>(b.curr[i])));
+            static_cast<double>(a.curr[idx])
+            - static_cast<double>(b.curr[idx])));
+    }
     return m;
 }
 
@@ -86,8 +97,25 @@ int main() {
                 "built-in BCs not fully batched");
         batch.applyOnGPU(fBat);
 
-        require(maxDiff(fSeq, fBat) == 0.0,
+        require(maxDiffNonCorner(fSeq, fBat) == 0.0,
                 "batched ghost refresh differs from sequential");
+
+        // Corner self-consistency: the X-periodic corner pass must make
+        // every corner-ghost cell the periodic image (±N in x) of the
+        // pass-0-filled y-ghost band.
+        fBat.downloadCurrFromDevice();
+        const int nxp = mesh.n[0], nyp = mesh.n[1];
+        for (int j : {-2, -1, nyp, nyp + 1})
+        for (int i : {-2, -1, nxp, nxp + 1}) {
+            const int ii = (i < 0) ? i + nxp : i - nxp;   // periodic image
+            const double got = fBat.curr[static_cast<std::size_t>(
+                fBat.index(i, j))];
+            const double exp = fBat.curr[static_cast<std::size_t>(
+                fBat.index(ii, j))];
+            require(got == exp, "corner ghost is not the periodic image at ("
+                                + std::to_string(i) + "," + std::to_string(j)
+                                + ")");
+        }
     }
 
     // ---- 2. unknown subclass goes to fallback -------------------------------
@@ -108,7 +136,7 @@ int main() {
                 "unknown BC subclass not routed to fallback");
         batch.applyOnGPU(fBat);
 
-        require(maxDiff(fSeq, fBat) == 0.0,
+        require(maxDiffNonCorner(fSeq, fBat) == 0.0,
                 "batched + fallback result differs from sequential");
     }
 
@@ -132,7 +160,7 @@ int main() {
         batch.applyOnGPU(f);
         f.d_curr = orig;
 
-        require(maxDiff(tmp, ref) == 0.0,
+        require(maxDiffNonCorner(tmp, ref) == 0.0,
                 "batch did not follow the swapped device pointer");
     }
 

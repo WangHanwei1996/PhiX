@@ -12,3 +12,8 @@ add_executable(conv_pde test_pde_convergence.cu)
 target_link_libraries(conv_pde PRIVATE phix)
 set_target_properties(conv_pde PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME conv_pde COMMAND conv_pde)
+
+add_executable(conv_advection test_advection_order.cu)
+target_link_libraries(conv_advection PRIVATE phix)
+set_target_properties(conv_advection PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME conv_advection COMMAND conv_advection)

@@ -340,16 +340,26 @@ void FixedBC::applyOnGPU(ScalarField& f) const {
 // cells, so concurrent execution inside one launch is hazard-free.
 // ===========================================================================
 
-__global__ void kernel_bc_batched(Real* data, const BCDesc* descs)
+__global__ void kernel_bc_batched(Real* data, const BCDesc* descs, int pass)
 {
     const BCDesc d = descs[blockIdx.z];
 
+    // pass 1 = corner fill: only descriptors with an extension run, over
+    // tangential ranges widened into the (already filled) ghost bands.
+    int lo0 = d.t0_lo, n0 = d.t0_count;
+    int lo1 = d.t1_lo, n1 = d.t1_count;
+    if (pass == 1) {
+        if (!d.ext0 && !d.ext1) return;
+        if (d.ext0) { lo0 -= d.ghost; n0 += 2 * d.ghost; }
+        if (d.ext1) { lo1 -= d.ghost; n1 += 2 * d.ghost; }
+    }
+
     const int s0 = blockIdx.x * blockDim.x + threadIdx.x;
     const int s1 = blockIdx.y * blockDim.y + threadIdx.y;
-    if (s0 >= d.t0_count || s1 >= d.t1_count) return;
+    if (s0 >= n0 || s1 >= n1) return;
 
-    const int face_off = (d.t0_lo + s0) * d.t0_stride
-                       + (d.t1_lo + s1) * d.t1_stride;
+    const int face_off = (lo0 + s0) * d.t0_stride
+                       + (lo1 + s1) * d.t1_stride;
 
     switch (d.type) {
     case 0:   // periodic — one descriptor fills BOTH sides of its axis
@@ -407,6 +417,22 @@ void BCBatch::build(const ScalarField& layoutRef,
         d.ghost       = pp.ghost;
         d.value       = Real(0);
 
+        // Corner-pass extension: tangential axes with GLOBAL index greater
+        // than this BC's axis (and active in the mesh) get extended in
+        // pass 1 — write regions stay disjoint across descriptors.
+        {
+            const int a = static_cast<int>(bc->patch.axis);
+            int t0a, t1a;
+            switch (a) {
+                case 0:  t0a = 1; t1a = 2; break;
+                case 1:  t0a = 0; t1a = 2; break;
+                default: t0a = 0; t1a = 1; break;
+            }
+            const int dim = layoutRef.mesh.dim;
+            d.ext0 = (t0a > a && t0a < dim) ? 1 : 0;
+            d.ext1 = (t1a > a && t1a < dim) ? 1 : 0;
+        }
+
         if (dynamic_cast<const PeriodicBC*>(bc)) {
             d.type = 0;
         } else if (dynamic_cast<const NoFluxBC*>(bc)) {
@@ -428,6 +454,20 @@ void BCBatch::build(const ScalarField& layoutRef,
         maxT0_ = (d.t0_count > maxT0_) ? d.t0_count : maxT0_;
         maxT1_ = (d.t1_count > maxT1_) ? d.t1_count : maxT1_;
     }
+    // grid must cover the extended (corner-pass) ranges as well
+    hasExt_ = false;
+    for (const auto& d : descs) {
+        if (d.ext0) {
+            hasExt_ = true;
+            maxT0_ = (d.t0_count + 2 * d.ghost > maxT0_)
+                         ? d.t0_count + 2 * d.ghost : maxT0_;
+        }
+        if (d.ext1) {
+            hasExt_ = true;
+            maxT1_ = (d.t1_count + 2 * d.ghost > maxT1_)
+                         ? d.t1_count + 2 * d.ghost : maxT1_;
+        }
+    }
     if (nDesc_ > 0) {
         CUDA_CHECK(cudaMalloc(&d_descs_, nDesc_ * sizeof(BCDesc)));
         CUDA_CHECK(cudaMemcpy(d_descs_, descs.data(),
@@ -446,8 +486,13 @@ void BCBatch::applyOnGPU(ScalarField& f, cudaStream_t stream) const
             throw std::runtime_error("BCBatch::applyOnGPU: field not on device");
         dim3 block(16, 16);
         dim3 grid((maxT0_ + 15) / 16, (maxT1_ + 15) / 16, nDesc_);
-        kernel_bc_batched<<<grid, block, 0, stream>>>(f.d_curr, d_descs_);
+        kernel_bc_batched<<<grid, block, 0, stream>>>(f.d_curr, d_descs_, 0);
         CUDA_CHECK(cudaGetLastError());
+        if (hasExt_) {   // corner pass (reads pass-0 ghost bands)
+            kernel_bc_batched<<<grid, block, 0, stream>>>(f.d_curr,
+                                                          d_descs_, 1);
+            CUDA_CHECK(cudaGetLastError());
+        }
     }
     for (BoundaryCondition* bc : fallback_) bc->applyOnGPU(f);
 }

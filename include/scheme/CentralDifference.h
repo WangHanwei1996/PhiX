@@ -90,4 +90,52 @@ struct CD4 {
     }
 };
 
+// ---------------------------------------------------------------------------
+// CD6 — 6th-order central differences (7-point per axis, ghost >= 3)
+//
+//   d1: (−f[i−3] + 9f[i−2] − 45f[i−1] + 45f[i+1] − 9f[i+2] + f[i+3]) / (60·dx)
+//   d2: (2f[i−3] − 27f[i−2] + 270f[i−1] − 490f[i]
+//        + 270f[i+1] − 27f[i+2] + 2f[i+3]) / (180·dx²)
+// ---------------------------------------------------------------------------
+struct CD6 {
+    static constexpr int ghostRequired() { return 3; }
+    static constexpr int order() { return 6; }
+    static constexpr const char* name() { return "CD6"; }
+
+    __host__ __device__
+    static Real d1(const Real* s, int c, int stride, Real inv_d) {
+        return (-s[c - 3*stride] + Real(9)*s[c - 2*stride]
+                - Real(45)*s[c - stride] + Real(45)*s[c + stride]
+                - Real(9)*s[c + 2*stride] + s[c + 3*stride])
+               * inv_d / Real(60);
+    }
+
+    __host__ __device__
+    static Real d2(const Real* s, int c, int stride, Real inv_d2) {
+        return (Real(2)*s[c - 3*stride] - Real(27)*s[c - 2*stride]
+                + Real(270)*s[c - stride] - Real(490)*s[c]
+                + Real(270)*s[c + stride] - Real(27)*s[c + 2*stride]
+                + Real(2)*s[c + 3*stride]) * inv_d2 / Real(180);
+    }
+
+    __host__ __device__
+    static Real laplacian(const Real* s, int c,
+                          int sx, int sy, int dim,
+                          Real inv_dx2, Real inv_dy2, Real inv_dz2) {
+        Real val = d2(s, c, 1, inv_dx2);
+        if (dim >= 2) val += d2(s, c, sx, inv_dy2);
+        if (dim >= 3) val += d2(s, c, sx * sy, inv_dz2);
+        return val;
+    }
+
+    __host__ __device__
+    static Real gradient(const Real* s, int c, int axis,
+                         int sx, int sy, int /*dim*/,
+                         Real inv_dx, Real inv_dy, Real inv_dz) {
+        int  stride = (axis == 0) ? 1 : (axis == 1) ? sx : sx * sy;
+        Real inv_d  = (axis == 0) ? inv_dx : (axis == 1) ? inv_dy : inv_dz;
+        return d1(s, c, stride, inv_d);
+    }
+};
+
 } // namespace PhiX::scheme

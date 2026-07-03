@@ -104,12 +104,16 @@ int main() {
                [](const ScalarField& f) { return lap(f, "Iso9", 1.0); }, refLap);
     checkOrder("lap CD4",  2, 4.0,
                [](const ScalarField& f) { return lap(f, "CD4", 1.0); }, refLap);
+    checkOrder("lap CD6",  3, 6.0,
+               [](const ScalarField& f) { return lap(f, "CD6", 1.0); }, refLap);
     checkOrder("grad CD2", 1, 2.0,
                [](const ScalarField& f) { return grad(f, 0, "CD2", 1.0); }, refGx);
     checkOrder("grad Iso9", 1, 2.0,
                [](const ScalarField& f) { return grad(f, 0, "Iso9", 1.0); }, refGx);
     checkOrder("grad CD4", 2, 4.0,
                [](const ScalarField& f) { return grad(f, 0, "CD4", 1.0); }, refGx);
+    checkOrder("grad CD6", 3, 6.0,
+               [](const ScalarField& f) { return grad(f, 0, "CD6", 1.0); }, refGx);
 
     return 0;
 }

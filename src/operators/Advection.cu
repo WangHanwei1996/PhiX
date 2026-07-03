@@ -10,25 +10,91 @@ namespace PhiX {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Upwind directional derivative along one axis, selected by velocity sign.
+// Upwind directional-derivative schemes (selected by velocity sign).
+// Each provides ghost() and deriv(s, c, stride, inv_d, positive).
 // ---------------------------------------------------------------------------
-__host__ __device__ inline
-double upwind_d1(const Real* s, int c, int stride, double inv_d, double u) {
-    return (u > 0.0) ? (s[c] - s[c - stride]) * inv_d
-                     : (s[c + stride] - s[c]) * inv_d;
-}
 
+// 1st-order donor cell
+struct UW1 {
+    static constexpr int ghost() { return 1; }
+    __host__ __device__ static
+    Real deriv(const Real* s, int c, int st, Real inv_d, bool pos) {
+        return pos ? (s[c] - s[c - st]) * inv_d
+                   : (s[c + st] - s[c]) * inv_d;
+    }
+};
+
+// 2nd-order fully one-sided upwind
+struct UW2 {
+    static constexpr int ghost() { return 2; }
+    __host__ __device__ static
+    Real deriv(const Real* s, int c, int st, Real inv_d, bool pos) {
+        return pos
+            ? ( Real(3)*s[c] - Real(4)*s[c-st] + s[c-2*st]) * inv_d * Real(0.5)
+            : (-Real(3)*s[c] + Real(4)*s[c+st] - s[c+2*st]) * inv_d * Real(0.5);
+    }
+};
+
+// 5th-order HJ-WENO (Jiang-Shu weights; Osher-Fedkiw formulation).
+// Smooth fields: 5th order; near kinks the smoothness indicators bias the
+// stencil away from the discontinuity (essentially non-oscillatory).
+struct WENO5 {
+    static constexpr int ghost() { return 3; }
+
+    __host__ __device__ static
+    Real combine(Real v1, Real v2, Real v3, Real v4, Real v5) {
+        const Real c13 = Real(13.0 / 12.0), c14 = Real(0.25);
+        const Real b1 = c13 * (v1 - Real(2)*v2 + v3) * (v1 - Real(2)*v2 + v3)
+                      + c14 * (v1 - Real(4)*v2 + Real(3)*v3)
+                            * (v1 - Real(4)*v2 + Real(3)*v3);
+        const Real b2 = c13 * (v2 - Real(2)*v3 + v4) * (v2 - Real(2)*v3 + v4)
+                      + c14 * (v2 - v4) * (v2 - v4);
+        const Real b3 = c13 * (v3 - Real(2)*v4 + v5) * (v3 - Real(2)*v4 + v5)
+                      + c14 * (Real(3)*v3 - Real(4)*v4 + v5)
+                            * (Real(3)*v3 - Real(4)*v4 + v5);
+        const Real eps = Real(1e-6);
+        const Real a1 = Real(0.1) / ((eps + b1) * (eps + b1));
+        const Real a2 = Real(0.6) / ((eps + b2) * (eps + b2));
+        const Real a3 = Real(0.3) / ((eps + b3) * (eps + b3));
+        const Real inv = Real(1) / (a1 + a2 + a3);
+        const Real s1 =  v1 * Real(1.0/3.0) - v2 * Real(7.0/6.0) + v3 * Real(11.0/6.0);
+        const Real s2 = -v2 * Real(1.0/6.0) + v3 * Real(5.0/6.0) + v4 * Real(1.0/3.0);
+        const Real s3 =  v3 * Real(1.0/3.0) + v4 * Real(5.0/6.0) - v5 * Real(1.0/6.0);
+        return (a1 * s1 + a2 * s2 + a3 * s3) * inv;
+    }
+
+    __host__ __device__ static
+    Real deriv(const Real* s, int c, int st, Real inv_d, bool pos) {
+        if (pos) {   // D⁻: backward differences v1..v5 at i−2..i+2
+            const Real v1 = (s[c-2*st] - s[c-3*st]) * inv_d;
+            const Real v2 = (s[c-st]   - s[c-2*st]) * inv_d;
+            const Real v3 = (s[c]      - s[c-st])   * inv_d;
+            const Real v4 = (s[c+st]   - s[c])      * inv_d;
+            const Real v5 = (s[c+2*st] - s[c+st])   * inv_d;
+            return combine(v1, v2, v3, v4, v5);
+        } else {     // D⁺: mirrored
+            const Real v1 = (s[c+3*st] - s[c+2*st]) * inv_d;
+            const Real v2 = (s[c+2*st] - s[c+st])   * inv_d;
+            const Real v3 = (s[c+st]   - s[c])      * inv_d;
+            const Real v4 = (s[c]      - s[c-st])   * inv_d;
+            const Real v5 = (s[c-st]   - s[c-2*st]) * inv_d;
+            return combine(v1, v2, v3, v4, v5);
+        }
+    }
+};
+
+template<typename D>
 __global__ void kernel_adv_accumulate(
         Real*       rhs,
         const Real* src,
         const Real* ux,
         const Real* uy,
         const Real* uz,
-        double        coeff,
+        Real          coeff,
         int nx, int ny, int nz,
         int sx, int sy,
         int ghost, int dim,
-        double inv_dx, double inv_dy, double inv_dz)
+        Real inv_dx, Real inv_dy, Real inv_dz)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nx * ny * nz) return;
@@ -39,16 +105,19 @@ __global__ void kernel_adv_accumulate(
 
     int c = (i + ghost) + sx * ((j + ghost) + sy * (k + ghost));
 
-    double val = ux[c] * upwind_d1(src, c, 1, inv_dx, ux[c]);
-    if (dim >= 2) val += uy[c] * upwind_d1(src, c, sx, inv_dy, uy[c]);
-    if (dim >= 3) val += uz[c] * upwind_d1(src, c, sx * sy, inv_dz, uz[c]);
+    Real val = ux[c] * D::deriv(src, c, 1, inv_dx, ux[c] > Real(0));
+    if (dim >= 2) val += uy[c] * D::deriv(src, c, sx, inv_dy, uy[c] > Real(0));
+    if (dim >= 3) val += uz[c] * D::deriv(src, c, sx * sy, inv_dz,
+                                          uz[c] > Real(0));
 
     rhs[c] += coeff * val;
 }
 
 } // namespace
 
-Term adv(const VectorField& u, const ScalarField& f, double coeff) {
+template<typename D>
+static Term makeAdvTerm(const VectorField& u, const ScalarField& f,
+                        double coeff) {
     const int dim = f.mesh.dim;
     if (u.nComponents() < dim)
         throw std::invalid_argument(
@@ -65,14 +134,14 @@ Term adv(const VectorField& u, const ScalarField& f, double coeff) {
     t.type  = TermType::COMPOSITE;
     t.field = &f;
     t.coeff = coeff;
-    t.ghostRequired = 1;
+    t.ghostRequired = D::ghost();
 
     int    nx = f.mesh.n[0], ny = f.mesh.n[1], nz = f.mesh.n[2];
     int    sx = f.storedDims[0], sy = f.storedDims[1];
     int    g  = f.ghost;
-    double inv_dx = 1.0 / f.mesh.d[0];
-    double inv_dy = (dim >= 2) ? 1.0 / f.mesh.d[1] : 0.0;
-    double inv_dz = (dim >= 3) ? 1.0 / f.mesh.d[2] : 0.0;
+    const Real inv_dx = static_cast<Real>(1.0 / f.mesh.d[0]);
+    const Real inv_dy = (dim >= 2) ? static_cast<Real>(1.0 / f.mesh.d[1]) : Real(0);
+    const Real inv_dz = (dim >= 3) ? static_cast<Real>(1.0 / f.mesh.d[2]) : Real(0);
 
     const ScalarField* pf  = &f;
     const ScalarField* pux = &u[0];
@@ -85,8 +154,9 @@ Term adv(const VectorField& u, const ScalarField& f, double coeff) {
         if (!pf->d_curr || !pux->d_curr)
             throw std::runtime_error("adv GPU: source/velocity not on device");
         int total = nx * ny * nz;
-        kernel_adv_accumulate<<<(total + 255) / 256, 256, 0, pool.stream>>>(
-            d_rhs, pf->d_curr, pux->d_curr, puy->d_curr, puz->d_curr, c,
+        kernel_adv_accumulate<D><<<(total + 255) / 256, 256, 0, pool.stream>>>(
+            d_rhs, pf->d_curr, pux->d_curr, puy->d_curr, puz->d_curr,
+            static_cast<Real>(c),
             nx, ny, nz, sx, sy, g, dim, inv_dx, inv_dy, inv_dz);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -105,14 +175,31 @@ Term adv(const VectorField& u, const ScalarField& f, double coeff) {
         for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
             int ctr = (i + g) + sx * ((j + g) + sy * (k + g));
-            double val = vx[ctr] * upwind_d1(src, ctr, 1, inv_dx, vx[ctr]);
-            if (dim >= 2) val += vy[ctr] * upwind_d1(src, ctr, sx, inv_dy, vy[ctr]);
-            if (dim >= 3) val += vz[ctr] * upwind_d1(src, ctr, sx * sy, inv_dz, vz[ctr]);
-            rhs[ctr] += c * val;
+            Real val = vx[ctr] * D::deriv(src, ctr, 1, inv_dx, vx[ctr] > Real(0));
+            if (dim >= 2) val += vy[ctr] * D::deriv(src, ctr, sx, inv_dy,
+                                                    vy[ctr] > Real(0));
+            if (dim >= 3) val += vz[ctr] * D::deriv(src, ctr, sx * sy, inv_dz,
+                                                    vz[ctr] > Real(0));
+            rhs[ctr] += static_cast<Real>(c) * val;
         }
     };
 
     return t;
+}
+
+Term adv(const VectorField& u, const ScalarField& f, double coeff) {
+    return makeAdvTerm<UW1>(u, f, coeff);
+}
+
+Term adv(const VectorField& u, const ScalarField& f,
+         const std::string& schemeName, double coeff) {
+    if (schemeName == "UW2")   return makeAdvTerm<UW2>(u, f, coeff);
+    if (schemeName == "WENO5") return makeAdvTerm<WENO5>(u, f, coeff);
+    if (schemeName == "UW1" || schemeName.empty())
+        return makeAdvTerm<UW1>(u, f, coeff);
+    throw std::invalid_argument(
+        std::string("adv: unknown scheme '") + schemeName
+        + "'. Supported: UW1, UW2, WENO5");
 }
 
 } // namespace PhiX

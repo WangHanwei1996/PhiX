@@ -109,4 +109,57 @@ struct Iso9 {
     }
 };
 
+// ---------------------------------------------------------------------------
+// Iso27 — 27-point isotropic 3D Laplacian (O(h²), lattice-isotropic error)
+//
+//   ∇²f ≈ [ 7/15·(face sum) + 1/10·(edge sum) + 1/30·(corner sum)
+//           − 64/15·f ] / h²          (requires dx == dy == dz)
+//
+// Consistency (per-axis second moment): 2·7/15 + 8·1/10 + 8·1/30 = 2  ✓
+// Falls back to CD2 in 1D/2D and for gradient().
+// ---------------------------------------------------------------------------
+struct Iso27 {
+    static constexpr int ghostRequired() { return 1; }
+    static constexpr int order() { return 2; }
+    static constexpr const char* name() { return "Iso27"; }
+
+    __host__ __device__
+    static Real d1(const Real* s, int c, int stride, Real inv_d) {
+        return CD2::d1(s, c, stride, inv_d);
+    }
+    __host__ __device__
+    static Real d2(const Real* s, int c, int stride, Real inv_d2) {
+        return CD2::d2(s, c, stride, inv_d2);
+    }
+
+    __host__ __device__
+    static Real laplacian(const Real* s, int c,
+                          int sx, int sy, int dim,
+                          Real inv_dx2, Real inv_dy2, Real inv_dz2) {
+        if (dim == 3) {
+            const int sz = sx * sy;
+            const Real face =
+                s[c+1] + s[c-1] + s[c+sx] + s[c-sx] + s[c+sz] + s[c-sz];
+            const Real edge =
+                s[c+1+sx] + s[c-1+sx] + s[c+1-sx] + s[c-1-sx]
+              + s[c+1+sz] + s[c-1+sz] + s[c+1-sz] + s[c-1-sz]
+              + s[c+sx+sz] + s[c-sx+sz] + s[c+sx-sz] + s[c-sx-sz];
+            const Real corner =
+                s[c+1+sx+sz] + s[c-1+sx+sz] + s[c+1-sx+sz] + s[c-1-sx+sz]
+              + s[c+1+sx-sz] + s[c-1+sx-sz] + s[c+1-sx-sz] + s[c-1-sx-sz];
+            return (Real(7.0/15.0) * face + Real(0.1) * edge
+                    + Real(1.0/30.0) * corner
+                    - Real(64.0/15.0) * s[c]) * inv_dx2;
+        }
+        return CD2::laplacian(s, c, sx, sy, dim, inv_dx2, inv_dy2, inv_dz2);
+    }
+
+    __host__ __device__
+    static Real gradient(const Real* s, int c, int axis,
+                         int sx, int sy, int dim,
+                         Real inv_dx, Real inv_dy, Real inv_dz) {
+        return CD2::gradient(s, c, axis, sx, sy, dim, inv_dx, inv_dy, inv_dz);
+    }
+};
+
 } // namespace PhiX::scheme
