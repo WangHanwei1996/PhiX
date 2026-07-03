@@ -100,3 +100,68 @@ makePhi() {
     source "$PHIX_DIR/etc/bashrc"
     return $_exit
 }
+
+# ===========================================================================
+# PhiX developer commands (v2.26.0) — OpenFOAM-style helpers.
+# The tools in applications/tools/ (phixInfo, phixPlot, phixMonitor,
+# phixClean, phixNewCase) are picked up by the PATH scan above.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# phixBuild [make-targets...] — configure (if needed) and build in
+# $PHIX_DIR/build.  Fresh configures pass the nvcc path and architecture
+# explicitly (empty CUDAARCHS in the environment otherwise breaks CMake).
+# ---------------------------------------------------------------------------
+phixBuild() {
+    local bdir="$PHIX_DIR/build"
+    if [ ! -f "$bdir/CMakeCache.txt" ]; then
+        mkdir -p "$bdir"
+        cmake -S "$PHIX_DIR" -B "$bdir" \
+              -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+              -DCMAKE_CUDA_ARCHITECTURES="${PHIX_CUDA_ARCH:-75}" \
+              -DPHIX_CUDA_ARCH="${PHIX_CUDA_ARCH:-75}" || return
+    fi
+    cmake --build "$bdir" -j "$(nproc)" ${1:+--target "$@"}
+}
+
+# ---------------------------------------------------------------------------
+# phixTest [ctest-args...] — run the test suite (e.g. phixTest -R module_kks)
+# ---------------------------------------------------------------------------
+phixTest() {
+    ctest --test-dir "$PHIX_DIR/build" --output-on-failure "$@"
+}
+
+# ---------------------------------------------------------------------------
+# phixBench — run the performance baselines
+# ---------------------------------------------------------------------------
+phixBench() {
+    "$PHIX_DIR/build/test/benchmark/bench_stencil" &&
+    "$PHIX_DIR/build/test/benchmark/bench_semiimplicit"
+}
+
+# ---------------------------------------------------------------------------
+# phixVersion [-a] — newest release (or all), from changelog/
+# ---------------------------------------------------------------------------
+phixVersion() {
+    local d
+    if [ "${1:-}" = "-a" ]; then
+        for d in $(ls -d "$PHIX_DIR"/changelog/v* | sort -V); do
+            printf '%-10s %s\n' "$(basename "$d")" \
+                "$(head -1 "$d/RELEASE.md" | sed 's/^# *//')"
+        done
+    else
+        d=$(ls -d "$PHIX_DIR"/changelog/v* | sort -V | tail -1)
+        head -1 "$d/RELEASE.md" | sed 's/^# *//'
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# phixCase — jump to a solver's directory by name (phixCase GFA_FeB)
+# ---------------------------------------------------------------------------
+phixCase() {
+    [ -n "${1:-}" ] || { echo "usage: phixCase <solverName>"; return 1; }
+    local hit
+    hit=$(find "$PHIX_DIR/applications/solvers" "$PHIX_DIR/develop" \
+               -maxdepth 3 -type d -name "$1" 2>/dev/null | head -1)
+    [ -n "$hit" ] && cd "$hit" || echo "phixCase: '$1' not found"
+}
