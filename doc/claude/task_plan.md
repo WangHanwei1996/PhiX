@@ -9,6 +9,14 @@
 > （零阶不一致，v2.11.1 修复）；M5 基准量化了框架开销（完整 Euler 步比裸
 > kernel 慢 2.8–3.7×）；M6 实测 FLOAT 提速 CD2 1.6× / CD4 3.1×。
 > 详见各版 `changelog/v2.x.y/RELEASE.md`。
+>
+> **第二批（同日完成）**：
+>
+> | # | 模块 | 版本 | 关键实测 |
+> |---|------|------|----------|
+> | M8 | KKS 反截留流（`kksAddAntiTrapping`） | v2.15.0 | μ 跳变消除 96.3%；系数约定映射 a=1.0（数值零点 1.04） |
+> | M9 | 线性求解器层（matrix-free CG + Laplacian/Biharmonic 算子 + `fieldDot`） | v2.16.0 | Helmholtz 7–15 迭代、双调和 9 迭代 @tol 1e-12 |
+> | M10 | 半隐式 IMEX 积分器（`SemiImplicitSolver`） | v2.17.0 | 隐式扩散 @100×dt 与离散精确解差 9.5e-17；CH @50×∇⁴ 极限稳定、守恒 5.5e-15 |
 
 ## 执行顺序与版本规划
 
