@@ -17,3 +17,8 @@ add_executable(module_schemes_ext test_schemes_ext.cu)
 target_link_libraries(module_schemes_ext PRIVATE phix)
 set_target_properties(module_schemes_ext PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_schemes_ext COMMAND module_schemes_ext)
+
+add_executable(module_anisotropy test_anisotropy.cu)
+target_link_libraries(module_anisotropy PRIVATE phix)
+set_target_properties(module_anisotropy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_anisotropy COMMAND module_anisotropy)

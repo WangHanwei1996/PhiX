@@ -92,6 +92,7 @@ add_library(phix STATIC
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
     src/operators/Advection.cu
+    src/operators/Anisotropy.cu
     src/operators/FaceOps.cu
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp
