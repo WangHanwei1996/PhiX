@@ -76,6 +76,9 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda --expt-relaxed-
 # ---------------------------------------------------------------------------
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+# cuFFT (spectral elasticity / future spectral solvers)
+find_package(CUDAToolkit REQUIRED)
+
 # ---------------------------------------------------------------------------
 # PhiX core library  (static)
 # ---------------------------------------------------------------------------
@@ -115,11 +118,14 @@ add_library(phix STATIC
     src/material/BinaryAlloy.cu
     src/lbm/LBM.cu
     src/diagnostics/Interface.cu
+    src/mechanics/ElasticityFFT.cu
 )
 
 target_include_directories(phix PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
 )
+
+target_link_libraries(phix PUBLIC CUDA::cufft)
 
 # Ensure CUDA device-code linking is enabled for the library
 set_target_properties(phix PROPERTIES
