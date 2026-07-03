@@ -1,6 +1,8 @@
 #include "solver/Solver.h"
+#include "field/Reduce.h"
 
 #include <cuda_runtime.h>
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 
@@ -363,6 +365,28 @@ void Solver::multiStepAdvanceCPU() {
 // Public advance / advanceCPU
 // ===========================================================================
 
+void Solver::enableAdaptiveDt(const AdaptiveDt& opts) {
+    if (use_rk4_ || multiStep_)
+        throw std::invalid_argument(
+            "Solver::enableAdaptiveDt: only single-equation Euler mode is "
+            "supported (RK4 needs an embedded error estimate; multi-step "
+            "updates fields before all RHS are known).");
+    opts.validate();
+    adapt_ = opts;
+    adapt_.enabled = true;
+}
+
+// Host-side max|value| over physical cells (CPU fallback path)
+static double maxAbsPhysicalCPU(const ScalarField& f) {
+    double m = 0.0;
+    for (int k = 0; k < f.mesh.n[2]; ++k)
+    for (int j = 0; j < f.mesh.n[1]; ++j)
+    for (int i = 0; i < f.mesh.n[0]; ++i)
+        m = std::max(m, std::fabs(
+                f.curr[static_cast<std::size_t>(f.index(i, j, k))]));
+    return m;
+}
+
 void Solver::advance() {
     if (multiStep_) {
         multiStepAdvanceGPU();   // handles advanceTimeLevel internally
@@ -372,6 +396,10 @@ void Solver::advance() {
         } else {
             applyBCsGPU();
             equation_.computeRHS(rhs_);
+            if (adapt_.enabled) {
+                adapt_.lastMaxRate = reduce::fieldMaxAbs(rhs_);
+                dt = adapt_.propose(dt, adapt_.lastMaxRate);
+            }
             eulerUpdateGPU();
             CUDA_CHECK(cudaDeviceSynchronize());
         }
@@ -379,6 +407,14 @@ void Solver::advance() {
     }
     ++step;
     time += dt;
+
+    if (adapt_.enabled && adapt_.nanCheckEvery > 0
+        && step % adapt_.nanCheckEvery == 0
+        && reduce::fieldHasNonFinite(equation_.unknown))
+        throw std::runtime_error(
+            "Solver::advance: NaN/Inf detected in unknown '"
+            + equation_.unknown.name + "' at step "
+            + std::to_string(step) + " (t=" + std::to_string(time) + ")");
 }
 
 void Solver::advanceCPU() {
@@ -390,6 +426,10 @@ void Solver::advanceCPU() {
         } else {
             applyBCsCPU();
             equation_.computeRHSCPU(rhs_);
+            if (adapt_.enabled) {
+                adapt_.lastMaxRate = maxAbsPhysicalCPU(rhs_);
+                dt = adapt_.propose(dt, adapt_.lastMaxRate);
+            }
             eulerUpdateCPU();
         }
         equation_.unknown.advanceTimeLevelCPU();

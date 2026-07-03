@@ -26,3 +26,8 @@ add_executable(module_vector_equation test_vector_equation.cu)
 target_link_libraries(module_vector_equation PRIVATE phix)
 set_target_properties(module_vector_equation PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_vector_equation COMMAND module_vector_equation)
+
+add_executable(module_adaptive_dt test_adaptive_dt.cu)
+target_link_libraries(module_adaptive_dt PRIVATE phix)
+set_target_properties(module_adaptive_dt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_adaptive_dt COMMAND module_adaptive_dt)

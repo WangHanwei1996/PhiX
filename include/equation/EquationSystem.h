@@ -4,6 +4,7 @@
 #include "boundary/BoundaryCondition.h"
 #include "field/ScalarField.h"
 #include "solver/Solver.h"      // TimeScheme enum
+#include "solver/AdaptiveDt.h"
 
 #include <functional>
 #include <memory>
@@ -77,6 +78,15 @@ public:
              ScalarField*                    sourceField = nullptr);
 
     // -----------------------------------------------------------------------
+    // Adaptive time stepping (rate-limited Euler; see AdaptiveDt.h).
+    // The controlling rate is max|RHS| over ALL equations — the stiffest
+    // one sets dt.  Euler only; throws std::invalid_argument on RK4.
+    // After each advance(), `dt` holds the step size actually used.
+    // -----------------------------------------------------------------------
+    void enableAdaptiveDt(const AdaptiveDt& opts);
+    const AdaptiveDt& adaptiveDt() const { return adapt_; }
+
+    // -----------------------------------------------------------------------
     // Advance one time step (GPU path).
     // Lazily allocates scratch buffers on the first call.
     // -----------------------------------------------------------------------
@@ -103,6 +113,9 @@ private:
     std::vector<Entry> entries_;
 
     bool initialized_ = false;
+
+    // Adaptive-dt controller (enabled == false → fixed dt, zero overhead)
+    AdaptiveDt adapt_;
 
     // One RHS scratch per equation (Euler)
     std::vector<std::unique_ptr<ScalarField>> rhs_;

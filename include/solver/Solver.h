@@ -3,6 +3,7 @@
 #include "equation/Equation.h"
 #include "boundary/BoundaryCondition.h"
 #include "field/ScalarField.h"
+#include "solver/AdaptiveDt.h"
 
 #include <functional>
 #include <memory>
@@ -98,6 +99,16 @@ public:
     double     time  = 0.0;   // current simulation time
 
     // -----------------------------------------------------------------------
+    // Adaptive time stepping (rate-limited Euler; see AdaptiveDt.h).
+    // Only supported in single-equation Euler mode — throws
+    // std::invalid_argument for RK4 or multi-step solvers.
+    // After each advance(), `dt` holds the step size actually used and
+    // adaptiveDt().lastMaxRate the controlling max|RHS|.
+    // -----------------------------------------------------------------------
+    void enableAdaptiveDt(const AdaptiveDt& opts);
+    const AdaptiveDt& adaptiveDt() const { return adapt_; }
+
+    // -----------------------------------------------------------------------
     // Single time step (GPU path)
     // -----------------------------------------------------------------------
     void advance();
@@ -136,6 +147,9 @@ private:
     ScalarField phi_tmp_;
 
     bool use_rk4_   = false;
+
+    // Adaptive-dt controller (enabled == false → fixed dt, zero overhead)
+    AdaptiveDt adapt_;
 
     // Multi-step mode
     bool                                         multiStep_ = false;

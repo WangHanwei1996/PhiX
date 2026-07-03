@@ -1,7 +1,10 @@
 #include "equation/EquationSystem.h"
 #include "field/ScalarField.h"
+#include "field/Reduce.h"
 
 #include <cuda_runtime.h>
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -154,6 +157,15 @@ void EquationSystem::eulerAdvanceGPU_()
     for (std::size_t i = 0; i < entries_.size(); ++i)
         entries_[i].equation->computeRHS(*rhs_[i]);
 
+    // 2b. Adaptive dt: the stiffest equation controls the step
+    if (adapt_.enabled) {
+        double rate = 0.0;
+        for (auto& r : rhs_)
+            rate = std::max(rate, reduce::fieldMaxAbs(*r));
+        adapt_.lastMaxRate = rate;
+        dt = adapt_.propose(dt, rate);
+    }
+
     // 3. Euler update
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         int n = static_cast<int>(entries_[i].equation->unknown.storedSize);
@@ -179,6 +191,20 @@ void EquationSystem::eulerAdvanceCPU_()
 
     for (std::size_t i = 0; i < entries_.size(); ++i)
         entries_[i].equation->computeRHSCPU(*rhs_[i]);
+
+    if (adapt_.enabled) {
+        double rate = 0.0;
+        for (auto& r : rhs_) {
+            const ScalarField& f = *r;
+            for (int k = 0; k < f.mesh.n[2]; ++k)
+            for (int j = 0; j < f.mesh.n[1]; ++j)
+            for (int i = 0; i < f.mesh.n[0]; ++i)
+                rate = std::max(rate, std::fabs(
+                    f.curr[static_cast<std::size_t>(f.index(i, j, k))]));
+        }
+        adapt_.lastMaxRate = rate;
+        dt = adapt_.propose(dt, rate);
+    }
 
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         auto& phi = entries_[i].equation->unknown.curr;
@@ -390,6 +416,17 @@ void EquationSystem::rk4AdvanceCPU_()
 // Public advance / advanceCPU
 // ===========================================================================
 
+void EquationSystem::enableAdaptiveDt(const AdaptiveDt& opts)
+{
+    if (scheme == TimeScheme::RK4)
+        throw std::invalid_argument(
+            "EquationSystem::enableAdaptiveDt: Euler scheme only "
+            "(RK4 needs an embedded error estimate).");
+    opts.validate();
+    adapt_ = opts;
+    adapt_.enabled = true;
+}
+
 void EquationSystem::advance()
 {
     lazyInit_();
@@ -401,6 +438,17 @@ void EquationSystem::advance()
 
     ++step;
     time += dt;
+
+    if (adapt_.enabled && adapt_.nanCheckEvery > 0
+        && step % adapt_.nanCheckEvery == 0) {
+        for (auto& e : entries_)
+            if (reduce::fieldHasNonFinite(e.equation->unknown))
+                throw std::runtime_error(
+                    "EquationSystem::advance: NaN/Inf detected in unknown '"
+                    + e.equation->unknown.name + "' at step "
+                    + std::to_string(step) + " (t=" + std::to_string(time)
+                    + ")");
+    }
 }
 
 void EquationSystem::advanceCPU()
