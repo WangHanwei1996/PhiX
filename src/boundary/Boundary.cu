@@ -437,7 +437,7 @@ void BCBatch::build(const ScalarField& layoutRef,
     built_ = true;
 }
 
-void BCBatch::applyOnGPU(ScalarField& f) const
+void BCBatch::applyOnGPU(ScalarField& f, cudaStream_t stream) const
 {
     if (!built_)
         throw std::runtime_error("BCBatch::applyOnGPU: build() not called");
@@ -446,7 +446,7 @@ void BCBatch::applyOnGPU(ScalarField& f) const
             throw std::runtime_error("BCBatch::applyOnGPU: field not on device");
         dim3 block(16, 16);
         dim3 grid((maxT0_ + 15) / 16, (maxT1_ + 15) / 16, nDesc_);
-        kernel_bc_batched<<<grid, block>>>(f.d_curr, d_descs_);
+        kernel_bc_batched<<<grid, block, 0, stream>>>(f.d_curr, d_descs_);
         CUDA_CHECK(cudaGetLastError());
     }
     for (BoundaryCondition* bc : fallback_) bc->applyOnGPU(f);

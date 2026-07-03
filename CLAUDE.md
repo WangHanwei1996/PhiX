@@ -89,7 +89,7 @@ Use the **`PHIX_FN` macro** (`= [=] __host__ __device__`) for every functor pass
 - Everything is in `namespace PhiX` (`PhiX::IO`, `PhiX::Fused`, `PhiX::scheme`).
 - Most stencil operators require `ghost >= 1`; `setRHS` validates the tree's `ghostRequired()` against each field's `ghost` and throws `std::invalid_argument` on a mismatch.
 - The docs in [doc/](doc/) come in English (`*_en.md`) and Chinese versions, but several (quickstart, equation, solver, field) still describe the **legacy `Field` + `Term`/`pw` API**. The source has since moved to `ScalarField` + the `ExprTree`/`EvalPlan`/`FusedTerm` pipeline — treat the docs as conceptual background and verify specifics against the headers.
-- Release notes live in `changelog/v<X.Y.Z>/RELEASE.md` and are written in **Chinese**; each feature bump adds a new version directory (mirror this when adding features). The codebase is currently at v2.20.0.
+- Release notes live in `changelog/v<X.Y.Z>/RELEASE.md` and are written in **Chinese**; each feature bump adds a new version directory (mirror this when adding features). The codebase is currently at v2.21.0.
 - `develop/` holds scratch experiments (mostly git-untracked); `applications/solvers/` holds real solvers; `tutorials/quickstart/` is the canonical example (currently disabled in the root CMake pending the solver refactor).
 - Generated/output artifacts — `.field`, `.dat`, `.vts`, `output/` dirs, and app binaries — are gitignored (see [.gitignore](.gitignore)).
 

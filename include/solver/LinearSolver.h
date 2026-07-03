@@ -58,10 +58,17 @@ class LinearOperator {
 public:
     virtual ~LinearOperator() = default;
 
-    virtual void apply(ScalarField& x, ScalarField& y) = 0;
+    // `stream`: all launches (BC refresh + stencil) go to this stream
+    // (nullptr = default).  Required for CUDA-graph capture.
+    virtual void apply(ScalarField& x, ScalarField& y,
+                       cudaStream_t stream = nullptr) = 0;
 
     // Halo width the operator's stencil needs on x and y.
     virtual int ghostRequired() const { return 1; }
+
+    // True when every launch honours the stream argument (no fallback BCs
+    // etc.) — precondition for graph capture.
+    virtual bool streamSafe() const { return false; }
 };
 
 // ===========================================================================
@@ -71,7 +78,12 @@ class LaplacianOp : public LinearOperator {
 public:
     LaplacianOp(double D, std::vector<BoundaryCondition*> bcs);
 
-    void apply(ScalarField& x, ScalarField& y) override;
+    void apply(ScalarField& x, ScalarField& y,
+               cudaStream_t stream = nullptr) override;
+
+    bool streamSafe() const override {
+        return !bcBatch_.built() || bcBatch_.fallbackCount() == 0;
+    }
 
     double D() const { return D_; }
 
@@ -94,7 +106,12 @@ public:
                  std::vector<BoundaryCondition*> bcsX,
                  std::vector<BoundaryCondition*> bcsLap);
 
-    void apply(ScalarField& x, ScalarField& y) override;
+    void apply(ScalarField& x, ScalarField& y,
+               cudaStream_t stream = nullptr) override;
+
+    bool streamSafe() const override {
+        return inner_.streamSafe() && outer_.streamSafe();
+    }
 
     double G() const { return G_; }
 
@@ -128,6 +145,13 @@ public:
     // Convergence-check cadence (host readback every N iterations).
     int checkEvery = 4;
 
+    // Capture one `checkEvery` burst as a CUDA graph and replay it
+    // (collapses ~10·checkEvery kernel launches into one).  Auto-disabled
+    // when the operator is not streamSafe(); the graph is re-captured
+    // whenever x/b/operator change.  σ = dt lives in a device slot, so
+    // per-step dt changes do NOT invalidate the graph.
+    bool useGraph = true;
+
     // Scratch fields (r, p, Lp) are allocated once for this mesh/ghost.
     ConjugateGradient(const Mesh& mesh, int ghost);
     ~ConjugateGradient();
@@ -146,7 +170,20 @@ public:
 
 private:
     ScalarField r_, p_, Lp_;
-    double*     d_s_ = nullptr;   // device scalars: rho, rhoNew, pAp, alpha, beta
+    double*     d_s_ = nullptr;   // device scalars: rho, rhoNew, pAp, alpha,
+                                  //                 beta, sigma
+    cudaStream_t stream_ = nullptr;   // all CG work runs here
+
+    // Cached burst graph + the identity it was captured for
+    cudaGraphExec_t graphExec_ = nullptr;
+    const void* keyX_ = nullptr;
+    const void* keyB_ = nullptr;
+    const void* keyL_ = nullptr;
+    int         keyBurst_ = 0;
+
+    void enqueueIteration(LinearOperator& L, ScalarField& x,
+                          cudaStream_t stream, int n);
+    void destroyGraph_();
 };
 
 } // namespace PhiX

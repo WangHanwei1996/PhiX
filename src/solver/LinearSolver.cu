@@ -58,12 +58,17 @@ __global__ void kernel_residual(Real* r, const Real* b, const Real* x,
     if (i < n) r[i] = b[i] - x[i] + sigma * Lx[i];
 }
 
-// Ap = p − sigma·Lp           (stored into Lp in-place)
-__global__ void kernel_form_A(Real* Lp, const Real* p, Real sigma, int n)
+// Ap = p − sigma·Lp           (sigma read from a device slot so a captured
+//                              graph survives per-step dt changes)
+__global__ void kernel_form_A(Real* Lp, const Real* p, const double* sigma,
+                              int n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) Lp[i] = p[i] - sigma * Lp[i];
+    if (i < n) Lp[i] = p[i] - static_cast<Real>(*sigma) * Lp[i];
 }
+
+// Write a host value into a device scalar slot (async, no pinned staging)
+__global__ void kernel_set_scalar(double* slot, double v) { *slot = v; }
 
 // x += alpha·p ;  r −= alpha·Ap        (alpha read from a device scalar)
 __global__ void kernel_update_xr(Real* x, Real* r, const Real* p,
@@ -122,11 +127,11 @@ inline int blocks(std::size_t n) { return static_cast<int>((n + 255) / 256); }
 LaplacianOp::LaplacianOp(double D, std::vector<BoundaryCondition*> bcs)
     : D_(D), bcs_(std::move(bcs)) {}
 
-void LaplacianOp::apply(ScalarField& x, ScalarField& y) {
+void LaplacianOp::apply(ScalarField& x, ScalarField& y, cudaStream_t stream) {
     if (!x.d_curr || !y.d_curr)
         throw std::runtime_error("LaplacianOp::apply: fields not on device");
     if (!bcBatch_.built()) bcBatch_.build(x, bcs_);
-    bcBatch_.applyOnGPU(x);
+    bcBatch_.applyOnGPU(x, stream);
 
     const Mesh& m = x.mesh;
     const int dim = m.dim;
@@ -137,7 +142,7 @@ void LaplacianOp::apply(ScalarField& x, ScalarField& y) {
         ? static_cast<Real>(1.0 / (m.d[2] * m.d[2])) : Real(0);
 
     const int total = m.n[0] * m.n[1] * m.n[2];
-    kernel_lap_apply<<<blocks(total), 256>>>(
+    kernel_lap_apply<<<blocks(total), 256, 0, stream>>>(
         y.d_curr, x.d_curr, m.n[0], m.n[1], m.n[2],
         x.storedDims[0], x.storedDims[1], x.ghost, dim,
         static_cast<Real>(D_), inv_dx2, inv_dy2, inv_dz2);
@@ -158,15 +163,15 @@ BiharmonicOp::BiharmonicOp(double G,
     , outer_(-G, bcsLap_)
 {}
 
-void BiharmonicOp::apply(ScalarField& x, ScalarField& y) {
+void BiharmonicOp::apply(ScalarField& x, ScalarField& y, cudaStream_t stream) {
     if (!lap_) {
         lap_ = std::make_unique<ScalarField>(x.mesh, "_bih_lap", x.ghost);
         lap_->allocDevice();
         CUDA_CHECK(cudaMemset(lap_->d_curr, 0,
                               lap_->storedSize * sizeof(Real)));
     }
-    inner_.apply(x, *lap_);     // lap = ∇²x
-    outer_.apply(*lap_, y);     // y = −G·∇²(lap)
+    inner_.apply(x, *lap_, stream);     // lap = ∇²x
+    outer_.apply(*lap_, y, stream);     // y = −G·∇²(lap)
 }
 
 // ===========================================================================
@@ -178,12 +183,47 @@ ConjugateGradient::ConjugateGradient(const Mesh& mesh, int ghost)
     , p_(makeScratch(mesh, ghost, "_cg_p"))
     , Lp_(makeScratch(mesh, ghost, "_cg_Lp"))
 {
-    CUDA_CHECK(cudaMalloc(&d_s_, 5 * sizeof(double)));
-    CUDA_CHECK(cudaMemset(d_s_, 0, 5 * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_s_, 6 * sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_s_, 0, 6 * sizeof(double)));
+    CUDA_CHECK(cudaStreamCreate(&stream_));
 }
 
 ConjugateGradient::~ConjugateGradient() {
+    destroyGraph_();
+    if (stream_) cudaStreamDestroy(stream_);
     if (d_s_) cudaFree(d_s_);   // best-effort; no throw in dtor
+}
+
+void ConjugateGradient::destroyGraph_() {
+    if (graphExec_) {
+        cudaGraphExecDestroy(graphExec_);
+        graphExec_ = nullptr;
+    }
+    keyX_ = keyB_ = keyL_ = nullptr;
+    keyBurst_ = 0;
+}
+
+// One CG iteration, enqueued on `stream` with zero host round trips.
+void ConjugateGradient::enqueueIteration(LinearOperator& L, ScalarField& x,
+                                         cudaStream_t stream, int n)
+{
+    // Ap = p − σ·Lp   (in place in Lp_)
+    L.apply(p_, Lp_, stream);
+    kernel_form_A<<<blocks(n), 256, 0, stream>>>(Lp_.d_curr, p_.d_curr,
+                                                 d_s_ + 5, n);
+    CUDA_CHECK(cudaGetLastError());
+
+    reduce::fieldDotAsync(p_, Lp_, d_s_ + 2, stream);          // pAp
+    kernel_cg_alpha<<<1, 1, 0, stream>>>(d_s_);                // α = ρ/pAp
+    kernel_update_xr<<<blocks(n), 256, 0, stream>>>(
+        x.d_curr, r_.d_curr, p_.d_curr, Lp_.d_curr, d_s_ + 3, n);
+    CUDA_CHECK(cudaGetLastError());
+
+    reduce::fieldDotAsync(r_, r_, d_s_ + 1, stream);           // rhoNew
+    kernel_cg_beta<<<1, 1, 0, stream>>>(d_s_);                 // β, ρ←ρNew
+    kernel_update_p<<<blocks(n), 256, 0, stream>>>(
+        p_.d_curr, r_.d_curr, d_s_ + 4, n);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 ConjugateGradient::Result ConjugateGradient::solve(
@@ -211,15 +251,22 @@ ConjugateGradient::Result ConjugateGradient::solve(
         return {0, 0.0, true};
     }
 
-    // r = b − A x = b − x + σ·Lx ;  p = r
-    L.apply(x, Lp_);
-    kernel_residual<<<blocks(n), 256>>>(r_.d_curr, b.d_curr, x.d_curr,
-                                        Lp_.d_curr, sg, n);
-    CUDA_CHECK(cudaGetLastError());
-    kernel_copy_p<<<blocks(n), 256>>>(p_.d_curr, r_.d_curr, n);
+    // σ into its device slot (graph kernels read it via pointer)
+    kernel_set_scalar<<<1, 1, 0, stream_>>>(d_s_ + 5, sigma);
     CUDA_CHECK(cudaGetLastError());
 
-    // Initial rho — one synchronous readback (also catches x0 == solution)
+    // r = b − A x = b − x + σ·Lx ;  p = r
+    L.apply(x, Lp_, stream_);
+    kernel_residual<<<blocks(n), 256, 0, stream_>>>(
+        r_.d_curr, b.d_curr, x.d_curr, Lp_.d_curr, sg, n);
+    CUDA_CHECK(cudaGetLastError());
+    kernel_copy_p<<<blocks(n), 256, 0, stream_>>>(p_.d_curr, r_.d_curr, n);
+    CUDA_CHECK(cudaGetLastError());
+
+    // Initial rho — one synchronous readback (also catches x0 == solution).
+    // NOTE: fieldDot runs on the default stream; order against stream_ by
+    // draining it first (single cheap sync at solve start).
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
     double rho = reduce::fieldDot(r_, r_);
     CUDA_CHECK(cudaMemcpy(d_s_, &rho, sizeof(double),
                           cudaMemcpyHostToDevice));
@@ -232,33 +279,43 @@ ConjugateGradient::Result ConjugateGradient::solve(
     }
 
     const int cadence = (checkEvery > 0) ? checkEvery : 1;
+
+    // --- graph path: capture one cadence-burst once, then replay ---------
+    const bool graphOK = useGraph && L.streamSafe();
+    if (graphOK && (graphExec_ == nullptr || keyX_ != x.d_curr
+                    || keyB_ != b.d_curr || keyL_ != &L
+                    || keyBurst_ != cadence)) {
+        destroyGraph_();
+        cudaGraph_t graph = nullptr;
+        CUDA_CHECK(cudaStreamBeginCapture(stream_,
+                                          cudaStreamCaptureModeThreadLocal));
+        for (int k = 0; k < cadence; ++k)
+            enqueueIteration(L, x, stream_, n);
+        CUDA_CHECK(cudaStreamEndCapture(stream_, &graph));
+        CUDA_CHECK(cudaGraphInstantiate(&graphExec_, graph, nullptr,
+                                        nullptr, 0));
+        CUDA_CHECK(cudaGraphDestroy(graph));
+        keyX_ = x.d_curr;
+        keyB_ = b.d_curr;
+        keyL_ = &L;
+        keyBurst_ = cadence;
+    }
+
     int it = 0;
     while (it < maxIter) {
-        // --- enqueue `cadence` iterations with zero host round trips ---
         const int burst = std::min(cadence, maxIter - it);
-        for (int k = 0; k < burst; ++k) {
-            // Ap = p − σ·Lp   (in place in Lp_)
-            L.apply(p_, Lp_);
-            kernel_form_A<<<blocks(n), 256>>>(Lp_.d_curr, p_.d_curr, sg, n);
-            CUDA_CHECK(cudaGetLastError());
-
-            reduce::fieldDotAsync(p_, Lp_, d_s_ + 2);          // pAp
-            kernel_cg_alpha<<<1, 1>>>(d_s_);                   // α = ρ/pAp
-            kernel_update_xr<<<blocks(n), 256>>>(
-                x.d_curr, r_.d_curr, p_.d_curr, Lp_.d_curr, d_s_ + 3, n);
-            CUDA_CHECK(cudaGetLastError());
-
-            reduce::fieldDotAsync(r_, r_, d_s_ + 1);           // rhoNew
-            kernel_cg_beta<<<1, 1>>>(d_s_);                    // β, ρ←ρNew
-            kernel_update_p<<<blocks(n), 256>>>(
-                p_.d_curr, r_.d_curr, d_s_ + 4, n);
-            CUDA_CHECK(cudaGetLastError());
+        if (graphOK && graphExec_ && burst == cadence) {
+            CUDA_CHECK(cudaGraphLaunch(graphExec_, stream_));
+        } else {
+            for (int k = 0; k < burst; ++k)
+                enqueueIteration(L, x, stream_, n);
         }
         it += burst;
 
         // --- convergence checkpoint: single synchronous readback ---
-        CUDA_CHECK(cudaMemcpy(&rho, d_s_, sizeof(double),
-                              cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpyAsync(&rho, d_s_, sizeof(double),
+                                   cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
         if (!std::isfinite(rho))
             throw std::runtime_error(
                 "ConjugateGradient::solve: residual became non-finite — "

@@ -217,5 +217,61 @@ int main() {
         require(threw, "exhausted solve did not throw with throwOnFail=true");
     }
 
+    // =======================================================================
+    // 6. CUDA-graph path == non-graph path; dt change reuses the graph
+    // =======================================================================
+    {
+        const int N = 96;
+        const double dx = 2.0 * M_PI / N;
+        Mesh mesh = Mesh::makeUniform2D(CoordSys::CARTESIAN,
+                                        N, dx, 0.0, N, dx, 0.0);
+        PeriodicBC bcx(mesh.facePatch(Axis::X, Side::LOW));
+        PeriodicBC bcy(mesh.facePatch(Axis::Y, Side::LOW));
+        LaplacianOp L(0.9, {&bcx, &bcy});
+
+        ScalarField xRef(mesh, "xref", 1), b(mesh, "b", 1);
+        ScalarField xg(mesh, "xg", 1), xn(mesh, "xn", 1);
+        xRef.initialize([](double xx, double yy, double) {
+            return std::sin(3.0 * xx) * std::cos(2.0 * yy) + 0.4 * std::sin(yy);
+        });
+        xRef.allocDevice(); xRef.uploadAllToDevice();
+
+        const double sigma = 0.07;
+        buildRhs(L, sigma, xRef, b);
+
+        xg.fill(0.0); xg.allocDevice(); xg.uploadAllToDevice();
+        xn.fill(0.0); xn.allocDevice(); xn.uploadAllToDevice();
+
+        ConjugateGradient cgG(mesh, 1);   // graph on (default)
+        ConjugateGradient cgN(mesh, 1);
+        cgN.useGraph = false;
+
+        auto rg = cgG.solve(L, sigma, xg, b, 1e-12, 500);
+        auto rn = cgN.solve(L, sigma, xn, b, 1e-12, 500);
+        require(rg.converged && rn.converged, "graph/non-graph did not converge");
+
+        xg.downloadCurrFromDevice();
+        xn.downloadCurrFromDevice();
+        double dev = 0.0;
+        for (std::size_t i = 0; i < xg.storedSize; ++i)
+            dev = std::max(dev, std::fabs(
+                static_cast<double>(xg.curr[i]) - xn.curr[i]));
+        require(dev < 1e-12, "graph path differs from non-graph path: "
+                             + std::to_string(dev));
+
+        // dt (sigma) change: same x/b/L → graph must be REUSED (sigma lives
+        // in a device slot) and still give the right answer
+        const double sigma2 = 0.011;
+        buildRhs(L, sigma2, xRef, b);
+        xg.fill(0.0); xg.uploadAllToDevice();
+        auto rg2 = cgG.solve(L, sigma2, xg, b, 1e-12, 500);
+        require(rg2.converged, "sigma-change solve did not converge");
+        require(maxErrVsRef(xg, xRef) < 1e-9,
+                "sigma-change solve wrong (stale sigma in graph?)");
+
+        std::printf("  graph path: %d iters (graph) vs %d iters (plain),"
+                    " dev %.1e\n", rg.iterations, rn.iterations, dev);
+    }
+
     return 0;
 }

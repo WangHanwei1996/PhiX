@@ -29,6 +29,8 @@
 
 #include "core/Real.h"
 #include "boundary/BoundaryCondition.h"
+
+#include <cuda_runtime.h>
 #include "field/ScalarField.h"
 
 #include <vector>
@@ -67,7 +69,10 @@ public:
 
     // One batched kernel launch (+ any fallback BCs).  No-op for an empty
     // batch.  f must share the layout given to build().
-    void applyOnGPU(ScalarField& f) const;
+    // `stream`: launch stream (nullptr = default).  NOTE: fallback BCs do
+    // not take a stream — callers that require full stream control (graph
+    // capture) must check fallbackCount() == 0.
+    void applyOnGPU(ScalarField& f, cudaStream_t stream = nullptr) const;
 
 private:
     std::vector<BoundaryCondition*> fallback_;

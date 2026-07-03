@@ -194,7 +194,8 @@ bool fieldHasNonFinite(const ScalarField& f) {
 
 // Enqueue the CUB dot-product reduction with the result left in d_out.
 static void enqueueDot(const ScalarField& a, const ScalarField& b,
-                       double* d_out, const char* fn) {
+                       double* d_out, const char* fn,
+                       cudaStream_t stream = nullptr) {
     if (a.storedSize != b.storedSize || a.ghost != b.ghost)
         throw std::invalid_argument(
             std::string(fn) + ": fields '" + a.name + "' and '" + b.name
@@ -210,9 +211,10 @@ static void enqueueDot(const ScalarField& a, const ScalarField& b,
         thrust::make_counting_iterator(0), gather);
 
     std::size_t bytes = 0;
-    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it, d_out, n));
+    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it, d_out, n, stream));
     ensureScratch(bytes);
-    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it, d_out, n));
+    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it, d_out, n,
+                                      stream));
 }
 
 double fieldDot(const ScalarField& a, const ScalarField& b) {
@@ -226,10 +228,10 @@ double fieldDot(const ScalarField& a, const ScalarField& b) {
 }
 
 void fieldDotAsync(const ScalarField& a, const ScalarField& b,
-                   double* d_out) {
+                   double* d_out, cudaStream_t stream) {
     if (!g_scratch.d_out)         // ensureScratch touches d_out lazily
         CUDA_CHECK(cudaMalloc(&g_scratch.d_out, sizeof(double)));
-    enqueueDot(a, b, d_out, "reduce::fieldDotAsync");
+    enqueueDot(a, b, d_out, "reduce::fieldDotAsync", stream);
 }
 
 void freeScratch() {
