@@ -107,6 +107,15 @@ private:
 
 // ===========================================================================
 // ConjugateGradient — solves (I − σ·L) x = b, matrix-free, on the GPU.
+//
+// Device-resident control flow (v2.20.0): α and β are computed by
+// single-thread kernels from CUB reduction results that never leave the
+// device — a CG iteration enqueues ~10 kernels and ZERO host round trips.
+// The host only reads back the residual every `checkEvery` iterations to
+// decide convergence (each readback is a full pipeline drain, which is
+// what used to dominate the solve cost at small/medium grids).  The solve
+// may therefore run up to checkEvery−1 iterations past the tolerance —
+// a negligible price against the removed synchronisations.
 // ===========================================================================
 class ConjugateGradient {
 public:
@@ -116,8 +125,12 @@ public:
         bool   converged   = false;
     };
 
+    // Convergence-check cadence (host readback every N iterations).
+    int checkEvery = 4;
+
     // Scratch fields (r, p, Lp) are allocated once for this mesh/ghost.
     ConjugateGradient(const Mesh& mesh, int ghost);
+    ~ConjugateGradient();
 
     ConjugateGradient(const ConjugateGradient&)            = delete;
     ConjugateGradient& operator=(const ConjugateGradient&) = delete;
@@ -133,6 +146,7 @@ public:
 
 private:
     ScalarField r_, p_, Lp_;
+    double*     d_s_ = nullptr;   // device scalars: rho, rhoNew, pAp, alpha, beta
 };
 
 } // namespace PhiX

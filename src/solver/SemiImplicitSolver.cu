@@ -83,10 +83,11 @@ void SemiImplicitSolver::advance()
                               cudaMemcpyDeviceToDevice));
     }
 
-    // 3. (I − dt·L) φⁿ⁺¹ = b, initial guess φⁿ (solved in place)
+    // 3. (I − dt·L) φⁿ⁺¹ = b, initial guess φⁿ (solved in place).
+    // No trailing device sync: the CG convergence checkpoint already
+    // drained the pipeline, and host readers block on the stream anyway.
     last_ = cg_.solve(L_, dt, phi, b_, cgOpts_.relTol, cgOpts_.maxIter);
 
-    CUDA_CHECK(cudaDeviceSynchronize());
     phi.advanceTimeLevelGPU();
 
     ++step;

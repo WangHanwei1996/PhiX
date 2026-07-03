@@ -192,16 +192,17 @@ bool fieldHasNonFinite(const ScalarField& f) {
                                            CubMax{}) != 0;
 }
 
-double fieldDot(const ScalarField& a, const ScalarField& b) {
+// Enqueue the CUB dot-product reduction with the result left in d_out.
+static void enqueueDot(const ScalarField& a, const ScalarField& b,
+                       double* d_out, const char* fn) {
     if (a.storedSize != b.storedSize || a.ghost != b.ghost)
         throw std::invalid_argument(
-            "reduce::fieldDot: fields '" + a.name + "' and '" + b.name
+            std::string(fn) + ": fields '" + a.name + "' and '" + b.name
             + "' have different layouts");
     if (!b.d_curr)
-        throw std::runtime_error("reduce::fieldDot: field '" + b.name
+        throw std::runtime_error(std::string(fn) + ": field '" + b.name
                                  + "' has no device allocation");
-    const GatherDot base = makeGather<GatherDot>(a, "reduce::fieldDot");
-    GatherDot gather = base;
+    GatherDot gather = makeGather<GatherDot>(a, fn);
     gather.data2 = b.d_curr;
 
     const int n = a.mesh.n[0] * a.mesh.n[1] * a.mesh.n[2];
@@ -209,15 +210,26 @@ double fieldDot(const ScalarField& a, const ScalarField& b) {
         thrust::make_counting_iterator(0), gather);
 
     std::size_t bytes = 0;
-    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it,
-                                      static_cast<double*>(g_scratch.d_out), n));
+    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it, d_out, n));
     ensureScratch(bytes);
-    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it,
-                                      static_cast<double*>(g_scratch.d_out), n));
+    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it, d_out, n));
+}
+
+double fieldDot(const ScalarField& a, const ScalarField& b) {
+    ensureScratch(0);   // d_out must exist BEFORE its value is passed on
+    enqueueDot(a, b, static_cast<double*>(g_scratch.d_out),
+               "reduce::fieldDot");
     double h = 0.0;
     CUDA_CHECK(cudaMemcpy(&h, g_scratch.d_out, sizeof(double),
                           cudaMemcpyDeviceToHost));
     return h;
+}
+
+void fieldDotAsync(const ScalarField& a, const ScalarField& b,
+                   double* d_out) {
+    if (!g_scratch.d_out)         // ensureScratch touches d_out lazily
+        CUDA_CHECK(cudaMalloc(&g_scratch.d_out, sizeof(double)));
+    enqueueDot(a, b, d_out, "reduce::fieldDotAsync");
 }
 
 void freeScratch() {

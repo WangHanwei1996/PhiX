@@ -37,6 +37,11 @@ bool fieldHasNonFinite(const ScalarField& f);
 // Both fields must share the same layout.
 double fieldDot(const ScalarField& a, const ScalarField& b);
 
+// Asynchronous variant: the double result is written to the DEVICE slot
+// d_out (no host copy, no synchronisation — enqueued on the default
+// stream).  Building block for device-resident solver control flow (CG).
+void fieldDotAsync(const ScalarField& a, const ScalarField& b, double* d_out);
+
 // Release the internally cached device scratch buffers.
 void freeScratch();
 

@@ -2,3 +2,8 @@ add_executable(bench_stencil bench_stencil.cu)
 target_link_libraries(bench_stencil PRIVATE phix)
 set_target_properties(bench_stencil PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME bench_stencil COMMAND bench_stencil)
+
+add_executable(bench_semiimplicit bench_semiimplicit.cu)
+target_link_libraries(bench_semiimplicit PRIVATE phix)
+set_target_properties(bench_semiimplicit PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME bench_semiimplicit COMMAND bench_semiimplicit)
