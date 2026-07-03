@@ -273,5 +273,36 @@ int main() {
                     " dev %.1e\n", rg.iterations, rn.iterations, dev);
     }
 
+    // =======================================================================
+    // 7. LaplacianOp stabilisation shift: L = D∇² − s·I (Eyre splitting)
+    // =======================================================================
+    {
+        const int N = 64;
+        Mesh mesh = Mesh::makeUniform1D(CoordSys::CARTESIAN, N, 1.0 / N);
+        PeriodicBC bc(mesh.facePatch(Axis::X, Side::LOW));
+        LaplacianOp L(0.5, {&bc}, /*shift=*/3.0);
+
+        ScalarField xRef(mesh, "xref", 1), b(mesh, "b", 1), x(mesh, "x", 1);
+        xRef.initialize([](double xx, double, double) {
+            return std::sin(2.0 * M_PI * xx) + 0.2;
+        });
+        xRef.allocDevice(); xRef.uploadAllToDevice();
+
+        const double sigma = 0.2;   // A = (1 + σ·s)·I − σ·D∇², SPD
+        buildRhs(L, sigma, xRef, b);
+        x.fill(0.0); x.allocDevice(); x.uploadAllToDevice();
+
+        ConjugateGradient cg(mesh, 1);
+        auto res = cg.solve(L, sigma, x, b, 1e-12, 500);
+        require(res.converged, "shifted-operator CG did not converge");
+        require(maxErrVsRef(x, xRef) < 1e-9,
+                "shifted-operator solution differs from reference");
+
+        bool threw = false;
+        try { LaplacianOp bad(1.0, {&bc}, -1.0); }
+        catch (const std::invalid_argument&) { threw = true; }
+        require(threw, "negative shift did not throw");
+    }
+
     return 0;
 }

@@ -72,11 +72,17 @@ public:
 };
 
 // ===========================================================================
-// LaplacianOp — L = D·∇² (CD2)
+// LaplacianOp — L = D·∇² − shift·I (CD2)
+//
+// The optional `shift` (>= 0) is the Eyre-style linear stabilisation for
+// IMEX reaction terms: splitting  −W·g'(φ) = −W·s·φ + W·(s·φ − g'(φ))
+// puts the destabilising linear part into L (shift = M·W·s) so the explicit
+// remainder has a bounded slope.  A = I − dt·L stays SPD for shift >= 0.
 // ===========================================================================
 class LaplacianOp : public LinearOperator {
 public:
-    LaplacianOp(double D, std::vector<BoundaryCondition*> bcs);
+    LaplacianOp(double D, std::vector<BoundaryCondition*> bcs,
+                double shift = 0.0);
 
     void apply(ScalarField& x, ScalarField& y,
                cudaStream_t stream = nullptr) override;
@@ -86,9 +92,11 @@ public:
     }
 
     double D() const { return D_; }
+    double shift() const { return shift_; }
 
 private:
     double                          D_;
+    double                          shift_;
     std::vector<BoundaryCondition*> bcs_;
     BCBatch                         bcBatch_;   // built lazily on first apply
 };

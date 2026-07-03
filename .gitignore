@@ -55,6 +55,9 @@ applications/solvers/GFA_binary/GFA_binary
 applications/solvers/GFA_binary/GFA_evo
 applications/solvers/GFA_FeB/GFA_FeB
 develop/Ostwald_Ripening/ostwald_ripening
+develop/implicit_examples/heat_implicit
+develop/implicit_examples/allen_cahn_semi
+develop/implicit_examples/spinodal_ch_semi
 develop/fieldOperation/test_fieldops
 test/sampleTest/diffusion_1D/diffusion_1D
 test/sampleTest/diffusion_1D/diffusion_compare

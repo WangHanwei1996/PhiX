@@ -166,5 +166,6 @@ add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 add_subdirectory("applications/solvers/GFA_binary")
 add_subdirectory("applications/solvers/GFA_FeB")
+add_subdirectory("develop/implicit_examples")
 
 endif()

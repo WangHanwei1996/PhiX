@@ -33,7 +33,7 @@ __global__ void kernel_lap_apply(
         Real* y, const Real* x,
         int nx, int ny, int nz,
         int sx, int sy, int g, int dim,
-        Real D, Real inv_dx2, Real inv_dy2, Real inv_dz2)
+        Real D, Real shift, Real inv_dx2, Real inv_dy2, Real inv_dz2)
 {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nx * ny * nz) return;
@@ -42,7 +42,8 @@ __global__ void kernel_lap_apply(
     const int k = tid / (nx * ny);
     const int c = (i + g) + sx * ((j + g) + sy * (k + g));
     y[c] = D * scheme::CD2::laplacian(x, c, sx, sy, dim,
-                                      inv_dx2, inv_dy2, inv_dz2);
+                                      inv_dx2, inv_dy2, inv_dz2)
+         - shift * x[c];
 }
 
 // ---------------------------------------------------------------------------
@@ -124,8 +125,14 @@ inline int blocks(std::size_t n) { return static_cast<int>((n + 255) / 256); }
 // LaplacianOp
 // ===========================================================================
 
-LaplacianOp::LaplacianOp(double D, std::vector<BoundaryCondition*> bcs)
-    : D_(D), bcs_(std::move(bcs)) {}
+LaplacianOp::LaplacianOp(double D, std::vector<BoundaryCondition*> bcs,
+                         double shift)
+    : D_(D), shift_(shift), bcs_(std::move(bcs))
+{
+    if (shift_ < 0.0)
+        throw std::invalid_argument(
+            "LaplacianOp: stabilisation shift must be >= 0 (SPD)");
+}
 
 void LaplacianOp::apply(ScalarField& x, ScalarField& y, cudaStream_t stream) {
     if (!x.d_curr || !y.d_curr)
@@ -145,7 +152,8 @@ void LaplacianOp::apply(ScalarField& x, ScalarField& y, cudaStream_t stream) {
     kernel_lap_apply<<<blocks(total), 256, 0, stream>>>(
         y.d_curr, x.d_curr, m.n[0], m.n[1], m.n[2],
         x.storedDims[0], x.storedDims[1], x.ghost, dim,
-        static_cast<Real>(D_), inv_dx2, inv_dy2, inv_dz2);
+        static_cast<Real>(D_), static_cast<Real>(shift_),
+        inv_dx2, inv_dy2, inv_dz2);
     CUDA_CHECK(cudaGetLastError());
 }
 
