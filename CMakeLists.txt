@@ -87,6 +87,11 @@ set_target_properties(phix PROPERTIES
 add_subdirectory(test/moduleTest)
 
 # ---------------------------------------------------------------------------
+# Convergence-order verification (MMS-style refinement studies)
+# ---------------------------------------------------------------------------
+add_subdirectory(test/convergence)
+
+# ---------------------------------------------------------------------------
 # Tutorials
 # ---------------------------------------------------------------------------
 # TODO(v2.2.0): re-enable after solver refactor

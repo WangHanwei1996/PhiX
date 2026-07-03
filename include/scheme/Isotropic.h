@@ -53,15 +53,20 @@ struct Iso9 {
                             int sx, int /*sy*/, int dim,
                             double inv_dx2, double inv_dy2, double inv_dz2) {
         if (dim == 2) {
-            // Patra-Karttunen weights: 1/2 face, 1/4 corner, inv_dx2 assumed == inv_dy2
+            // Isotropic 9-point (Mehrstellen / Patra-Karttunen) weights:
+            //   [4·(face sum) + (corner sum) − 20·center] / (6·dx²)
+            // Consistency check on f = x²: 4·(4x²+2dx²)+(4x²+4dx²)−20x²
+            //   = 12dx² → /(6dx²) = 2 = ∇²x².  (inv_dx2 assumed == inv_dy2.)
+            // NOTE: weights fixed in v2.11.1 — the previous
+            //   (face/2 + corner/4 − 3c)·(2/(3dx²))
+            // form converged to (2/3)·∇² (zeroth-order inconsistent), caught
+            // by the convergence suite.
             double center  = s[c];
             double face    = s[c + 1]      + s[c - 1]
                            + s[c + sx]     + s[c - sx];
             double corner  = s[c + 1 + sx] + s[c - 1 + sx]
                            + s[c + 1 - sx] + s[c - 1 - sx];
-            // ≈ (face/2 + corner/4 - 3·center) * (2/(3·dx²))
-            return (0.5 * face + 0.25 * corner - 3.0 * center)
-                   * (2.0 / 3.0) * inv_dx2;
+            return (4.0 * face + corner - 20.0 * center) / 6.0 * inv_dx2;
         }
         // fallback
         return CD2::laplacian(s, c, sx, /*sy will be unused in 1D*/ 1, dim,
