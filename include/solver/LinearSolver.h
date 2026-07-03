@@ -174,12 +174,25 @@ public:
     Result solve(LinearOperator& L, double sigma,
                  ScalarField& x, const ScalarField& b,
                  double relTol = 1e-8, int maxIter = 500,
-                 bool throwOnFail = true);
+                 bool throwOnFail = true) {
+        return solveOperator(L, 1.0, sigma, x, b, relTol, maxIter,
+                             throwOnFail);
+    }
+
+    // Generalised system  A x = b,  A = alpha·I − sigma·L.
+    // alpha = 1: the semi-implicit Helmholtz form above.
+    // alpha = 0, sigma = 1, L = D∇²: pure Poisson −D∇²x = b (for pure
+    // Neumann/periodic BCs use PoissonSolver, which handles the constant
+    // nullspace).  A must be SPD on the solved subspace.
+    Result solveOperator(LinearOperator& L, double alpha, double sigma,
+                         ScalarField& x, const ScalarField& b,
+                         double relTol = 1e-8, int maxIter = 500,
+                         bool throwOnFail = true);
 
 private:
     ScalarField r_, p_, Lp_;
-    double*     d_s_ = nullptr;   // device scalars: rho, rhoNew, pAp, alpha,
-                                  //                 beta, sigma
+    double*     d_s_ = nullptr;   // device scalars: rho, rhoNew, pAp, alphaCG,
+                                  //                 betaCG, sigma, alphaOp
     cudaStream_t stream_ = nullptr;   // all CG work runs here
 
     // Cached burst graph + the identity it was captured for
@@ -192,6 +205,37 @@ private:
     void enqueueIteration(LinearOperator& L, ScalarField& x,
                           cudaStream_t stream, int n);
     void destroyGraph_();
+};
+
+// ===========================================================================
+// PoissonSolver — solves  −∇·(D∇Φ) = rhs  with homogeneous BCs, matrix-free
+// (CG on A = −D∇²).  For pure Neumann/periodic BCs the operator has a
+// constant nullspace: the RHS is projected to zero mean and the solution is
+// returned mean-zero (set projectNullspace = false when the BCs fix the
+// level, e.g. FixedBC(0)).
+//
+//     PoissonSolver poisson(mesh, ghost, epsPermittivity, {&bcx, &bcy});
+//     poisson.solve(Phi, chargeDensity);        // BM6-style electrostatics
+// ===========================================================================
+class PoissonSolver {
+public:
+    PoissonSolver(const Mesh& mesh, int ghost, double D,
+                  std::vector<BoundaryCondition*> bcs);
+
+    PoissonSolver(const PoissonSolver&)            = delete;
+    PoissonSolver& operator=(const PoissonSolver&) = delete;
+
+    bool projectNullspace = true;
+
+    ConjugateGradient::Result solve(ScalarField& phi, const ScalarField& rhs,
+                                    double relTol = 1e-8, int maxIter = 1000,
+                                    bool throwOnFail = true);
+
+private:
+    LaplacianOp        L_;
+    ConjugateGradient  cg_;
+    ScalarField        b_;      // mean-projected RHS copy
+    double             cellCount_;
 };
 
 } // namespace PhiX

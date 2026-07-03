@@ -7,3 +7,8 @@ add_executable(module_semiimplicit test_semiimplicit.cu)
 target_link_libraries(module_semiimplicit PRIVATE phix)
 set_target_properties(module_semiimplicit PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_semiimplicit COMMAND module_semiimplicit)
+
+add_executable(module_poisson test_poisson.cu)
+target_link_libraries(module_poisson PRIVATE phix)
+set_target_properties(module_poisson PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_poisson COMMAND module_poisson)

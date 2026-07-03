@@ -51,21 +51,24 @@ __global__ void kernel_lap_apply(
 // zero-initialised so ghost slots stay finite)
 // ---------------------------------------------------------------------------
 
-// r = b − x + sigma·Lx        (initial residual for A = I − σL)
+// r = b − alpha·x + sigma·Lx   (initial residual for A = α·I − σ·L)
 __global__ void kernel_residual(Real* r, const Real* b, const Real* x,
-                                const Real* Lx, Real sigma, int n)
+                                const Real* Lx, Real alpha, Real sigma,
+                                int n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) r[i] = b[i] - x[i] + sigma * Lx[i];
+    if (i < n) r[i] = b[i] - alpha * x[i] + sigma * Lx[i];
 }
 
-// Ap = p − sigma·Lp           (sigma read from a device slot so a captured
-//                              graph survives per-step dt changes)
-__global__ void kernel_form_A(Real* Lp, const Real* p, const double* sigma,
-                              int n)
+// Ap = alpha·p − sigma·Lp     (both read from device slots so a captured
+//                              graph survives per-step coefficient changes)
+__global__ void kernel_form_A(Real* Lp, const Real* p, const double* alpha,
+                              const double* sigma, int n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) Lp[i] = p[i] - static_cast<Real>(*sigma) * Lp[i];
+    if (i < n)
+        Lp[i] = static_cast<Real>(*alpha) * p[i]
+              - static_cast<Real>(*sigma) * Lp[i];
 }
 
 // Write a host value into a device scalar slot (async, no pinned staging)
@@ -191,8 +194,8 @@ ConjugateGradient::ConjugateGradient(const Mesh& mesh, int ghost)
     , p_(makeScratch(mesh, ghost, "_cg_p"))
     , Lp_(makeScratch(mesh, ghost, "_cg_Lp"))
 {
-    CUDA_CHECK(cudaMalloc(&d_s_, 6 * sizeof(double)));
-    CUDA_CHECK(cudaMemset(d_s_, 0, 6 * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_s_, 7 * sizeof(double)));
+    CUDA_CHECK(cudaMemset(d_s_, 0, 7 * sizeof(double)));
     CUDA_CHECK(cudaStreamCreate(&stream_));
 }
 
@@ -218,7 +221,7 @@ void ConjugateGradient::enqueueIteration(LinearOperator& L, ScalarField& x,
     // Ap = p − σ·Lp   (in place in Lp_)
     L.apply(p_, Lp_, stream);
     kernel_form_A<<<blocks(n), 256, 0, stream>>>(Lp_.d_curr, p_.d_curr,
-                                                 d_s_ + 5, n);
+                                                 d_s_ + 6, d_s_ + 5, n);
     CUDA_CHECK(cudaGetLastError());
 
     reduce::fieldDotAsync(p_, Lp_, d_s_ + 2, stream);          // pAp
@@ -234,8 +237,8 @@ void ConjugateGradient::enqueueIteration(LinearOperator& L, ScalarField& x,
     CUDA_CHECK(cudaGetLastError());
 }
 
-ConjugateGradient::Result ConjugateGradient::solve(
-        LinearOperator& L, double sigma,
+ConjugateGradient::Result ConjugateGradient::solveOperator(
+        LinearOperator& L, double alpha, double sigma,
         ScalarField& x, const ScalarField& b,
         double relTol, int maxIter, bool throwOnFail)
 {
@@ -259,14 +262,16 @@ ConjugateGradient::Result ConjugateGradient::solve(
         return {0, 0.0, true};
     }
 
-    // σ into its device slot (graph kernels read it via pointer)
+    // σ and α into their device slots (graph kernels read via pointer)
     kernel_set_scalar<<<1, 1, 0, stream_>>>(d_s_ + 5, sigma);
+    kernel_set_scalar<<<1, 1, 0, stream_>>>(d_s_ + 6, alpha);
     CUDA_CHECK(cudaGetLastError());
 
     // r = b − A x = b − x + σ·Lx ;  p = r
     L.apply(x, Lp_, stream_);
     kernel_residual<<<blocks(n), 256, 0, stream_>>>(
-        r_.d_curr, b.d_curr, x.d_curr, Lp_.d_curr, sg, n);
+        r_.d_curr, b.d_curr, x.d_curr, Lp_.d_curr,
+        static_cast<Real>(alpha), sg, n);
     CUDA_CHECK(cudaGetLastError());
     kernel_copy_p<<<blocks(n), 256, 0, stream_>>>(p_.d_curr, r_.d_curr, n);
     CUDA_CHECK(cudaGetLastError());
@@ -341,6 +346,71 @@ ConjugateGradient::Result ConjugateGradient::solve(
             "ConjugateGradient::solve: no convergence after "
             + std::to_string(maxIter) + " iterations (relResidual = "
             + std::to_string(res.relResidual) + ")");
+    return res;
+}
+
+// ===========================================================================
+// PoissonSolver
+// ===========================================================================
+
+namespace {
+
+// out = in − mean   over physical cells (mean passed via device slot? host)
+__global__ void kernel_sub_const(Real* dst, const Real* src, Real mean,
+                                 int nx, int ny, int nz,
+                                 int sx, int sy, int g)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nx * ny * nz) return;
+    const int i = tid % nx;
+    const int j = (tid / nx) % ny;
+    const int k = tid / (nx * ny);
+    const int c = (i + g) + sx * ((j + g) + sy * (k + g));
+    dst[c] = src[c] - mean;
+}
+
+} // namespace
+
+PoissonSolver::PoissonSolver(const Mesh& mesh, int ghost, double D,
+                             std::vector<BoundaryCondition*> bcs)
+    : L_(D, std::move(bcs))
+    , cg_(mesh, ghost)
+    , b_(makeScratch(mesh, ghost, "_poisson_b"))
+    , cellCount_(static_cast<double>(mesh.n[0]) * mesh.n[1] * mesh.n[2])
+{}
+
+ConjugateGradient::Result PoissonSolver::solve(
+        ScalarField& phi, const ScalarField& rhs,
+        double relTol, int maxIter, bool throwOnFail)
+{
+    if (!phi.d_curr || !rhs.d_curr)
+        throw std::runtime_error("PoissonSolver::solve: fields not on device");
+
+    const Mesh& m = phi.mesh;
+    const int total = m.n[0] * m.n[1] * m.n[2];
+
+    Real meanB = Real(0);
+    if (projectNullspace)
+        meanB = static_cast<Real>(reduce::fieldSum(rhs) / cellCount_);
+    kernel_sub_const<<<blocks(total), 256>>>(
+        b_.d_curr, rhs.d_curr, meanB,
+        m.n[0], m.n[1], m.n[2],
+        phi.storedDims[0], phi.storedDims[1], phi.ghost);
+    CUDA_CHECK(cudaGetLastError());
+
+    // A = 0·I − 1·(D∇²) = −D∇²  (SPD on the mean-zero subspace)
+    auto res = cg_.solveOperator(L_, 0.0, 1.0, phi, b_,
+                                 relTol, maxIter, throwOnFail);
+
+    if (projectNullspace) {
+        const Real meanX = static_cast<Real>(
+            reduce::fieldSum(phi) / cellCount_);
+        kernel_sub_const<<<blocks(total), 256>>>(
+            phi.d_curr, phi.d_curr, meanX,
+            m.n[0], m.n[1], m.n[2],
+            phi.storedDims[0], phi.storedDims[1], phi.ghost);
+        CUDA_CHECK(cudaGetLastError());
+    }
     return res;
 }
 
