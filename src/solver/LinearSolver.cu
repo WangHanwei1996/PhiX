@@ -103,7 +103,8 @@ LaplacianOp::LaplacianOp(double D, std::vector<BoundaryCondition*> bcs)
 void LaplacianOp::apply(ScalarField& x, ScalarField& y) {
     if (!x.d_curr || !y.d_curr)
         throw std::runtime_error("LaplacianOp::apply: fields not on device");
-    for (auto* bc : bcs_) bc->applyOnGPU(x);
+    if (!bcBatch_.built()) bcBatch_.build(x, bcs_);
+    bcBatch_.applyOnGPU(x);
 
     const Mesh& m = x.mesh;
     const int dim = m.dim;
@@ -128,7 +129,12 @@ void LaplacianOp::apply(ScalarField& x, ScalarField& y) {
 BiharmonicOp::BiharmonicOp(double G,
                            std::vector<BoundaryCondition*> bcsX,
                            std::vector<BoundaryCondition*> bcsLap)
-    : G_(G), bcsX_(std::move(bcsX)), bcsLap_(std::move(bcsLap)) {}
+    : G_(G)
+    , bcsX_(std::move(bcsX))
+    , bcsLap_(std::move(bcsLap))
+    , inner_(1.0, bcsX_)     // persistent: BC batches built once, reused
+    , outer_(-G, bcsLap_)
+{}
 
 void BiharmonicOp::apply(ScalarField& x, ScalarField& y) {
     if (!lap_) {
@@ -137,12 +143,8 @@ void BiharmonicOp::apply(ScalarField& x, ScalarField& y) {
         CUDA_CHECK(cudaMemset(lap_->d_curr, 0,
                               lap_->storedSize * sizeof(Real)));
     }
-    // lap = ∇²x  (unit LaplacianOp semantics inline)
-    LaplacianOp inner(1.0, bcsX_);
-    inner.apply(x, *lap_);
-    // y = −G·∇²(lap)
-    LaplacianOp outer(-G_, bcsLap_);
-    outer.apply(*lap_, y);
+    inner_.apply(x, *lap_);     // lap = ∇²x
+    outer_.apply(*lap_, y);     // y = −G·∇²(lap)
 }
 
 // ===========================================================================

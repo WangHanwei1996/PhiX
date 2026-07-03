@@ -61,6 +61,7 @@ SemiImplicitSolver::SemiImplicitSolver(Equation& eqExplicit,
         throw std::invalid_argument(
             "SemiImplicitSolver: operator needs ghost >= "
             + std::to_string(L_.ghostRequired()));
+    bcBatch_.build(eq_.unknown, bcs_);
 }
 
 void SemiImplicitSolver::advance()
@@ -69,7 +70,7 @@ void SemiImplicitSolver::advance()
     const int n = static_cast<int>(phi.storedSize);
 
     // 1. ghosts for the explicit stencils
-    for (auto* bc : bcs_) bc->applyOnGPU(phi);
+    bcBatch_.applyOnGPU(phi);
 
     // 2. b = φⁿ + dt·N(φⁿ)   (N ≡ 0 when no explicit RHS was set)
     if (eq_.hasRHS()) {

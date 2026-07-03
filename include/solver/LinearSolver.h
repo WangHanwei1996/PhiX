@@ -43,6 +43,7 @@
 #include "core/Real.h"
 #include "field/ScalarField.h"
 #include "boundary/BoundaryCondition.h"
+#include "boundary/BCBatch.h"
 
 #include <memory>
 #include <vector>
@@ -77,6 +78,7 @@ public:
 private:
     double                          D_;
     std::vector<BoundaryCondition*> bcs_;
+    BCBatch                         bcBatch_;   // built lazily on first apply
 };
 
 // ===========================================================================
@@ -99,6 +101,7 @@ public:
 private:
     double                          G_;
     std::vector<BoundaryCondition*> bcsX_, bcsLap_;
+    LaplacianOp                     inner_, outer_;   // persistent (BC batches)
     std::unique_ptr<ScalarField>    lap_;   // scratch: ∇²x
 };
 

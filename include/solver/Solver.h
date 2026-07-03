@@ -2,6 +2,7 @@
 
 #include "equation/Equation.h"
 #include "boundary/BoundaryCondition.h"
+#include "boundary/BCBatch.h"
 #include "field/ScalarField.h"
 #include "solver/AdaptiveDt.h"
 
@@ -138,6 +139,7 @@ public:
 private:
     Equation&                       equation_;
     std::vector<BoundaryCondition*> bcs_;
+    BCBatch                         bcBatch_;      // all bcs_ in one launch
 
     // Scratch fields — allocated in constructor, same mesh & ghost as unknown
     ScalarField rhs_;   // used by Euler and each RK4 stage accumulator
@@ -154,6 +156,7 @@ private:
     // Multi-step mode
     bool                                         multiStep_ = false;
     std::vector<SolverStep>                      steps_;
+    std::vector<std::unique_ptr<BCBatch>>        stepBatches_;  // per-step BC batch
     std::vector<std::unique_ptr<ScalarField>>    stepScratch_;  // rhs scratch per step (null for STEADY)
 
     // -----------------------------------------------------------------------

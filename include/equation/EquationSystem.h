@@ -2,6 +2,7 @@
 
 #include "equation/Equation.h"
 #include "boundary/BoundaryCondition.h"
+#include "boundary/BCBatch.h"
 #include "field/ScalarField.h"
 #include "solver/Solver.h"      // TimeScheme enum
 #include "solver/AdaptiveDt.h"
@@ -108,6 +109,7 @@ private:
         Equation*                       equation;
         std::vector<BoundaryCondition*> bcs;
         ScalarField*                    sourceField;  // may == equation->unknown
+        std::unique_ptr<BCBatch>        batch;        // all bcs in one launch
     };
 
     std::vector<Entry> entries_;

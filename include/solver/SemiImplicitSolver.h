@@ -37,6 +37,7 @@
 
 #include "equation/Equation.h"
 #include "boundary/BoundaryCondition.h"
+#include "boundary/BCBatch.h"
 #include "field/ScalarField.h"
 #include "solver/LinearSolver.h"
 
@@ -84,6 +85,7 @@ public:
 private:
     Equation&                       eq_;
     std::vector<BoundaryCondition*> bcs_;
+    BCBatch                         bcBatch_;
     LinearOperator&                 L_;
     CGOptions                       cgOpts_;
 

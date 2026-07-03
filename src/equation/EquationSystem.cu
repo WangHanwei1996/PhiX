@@ -99,6 +99,11 @@ void EquationSystem::add(Equation&                       equation,
 void EquationSystem::lazyInit_()
 {
     if (initialized_) return;
+    for (auto& e : entries_) {
+        e.batch = std::make_unique<BCBatch>();
+        e.batch->build(*e.sourceField, e.bcs);
+    }
+
     initialized_ = true;
 
     for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -144,8 +149,7 @@ void EquationSystem::maybeSync_() const
 void EquationSystem::applyAllBCsGPU_()
 {
     for (auto& e : entries_)
-        for (auto* bc : e.bcs)
-            bc->applyOnGPU(*e.sourceField);
+        e.batch->applyOnGPU(*e.sourceField);
 }
 
 void EquationSystem::applyAllBCsCPU_()
@@ -271,7 +275,7 @@ void EquationSystem::rk4AdvanceGPU_()
         auto& sf  = *entries_[i].sourceField;
         Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
-        for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
+        entries_[i].batch->applyOnGPU(sf);
         sf.d_curr = orig;
     }
     // Swap d_curr of each unknown to phi_tmp, compute all RHS, restore
@@ -299,7 +303,7 @@ void EquationSystem::rk4AdvanceGPU_()
         auto& sf  = *entries_[i].sourceField;
         Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
-        for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
+        entries_[i].batch->applyOnGPU(sf);
         sf.d_curr = orig;
     }
     for (std::size_t i = 0; i < N; ++i) {
@@ -325,7 +329,7 @@ void EquationSystem::rk4AdvanceGPU_()
         auto& sf  = *entries_[i].sourceField;
         Real* orig = sf.d_curr;
         sf.d_curr = phi_tmp_[i]->d_curr;
-        for (auto* bc : entries_[i].bcs) bc->applyOnGPU(sf);
+        entries_[i].batch->applyOnGPU(sf);
         sf.d_curr = orig;
     }
     for (std::size_t i = 0; i < N; ++i) {

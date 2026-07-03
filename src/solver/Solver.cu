@@ -119,6 +119,7 @@ Solver::Solver(Equation&                       equation,
         throw std::runtime_error(
             "Solver: equation.unknown must have device memory allocated "
             "before constructing the Solver.");
+    bcBatch_.build(equation_.unknown, bcs_);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,8 @@ Solver::Solver(std::vector<SolverStep> steps,
         } else {
             stepScratch_.push_back(nullptr);
         }
+        stepBatches_.push_back(std::make_unique<BCBatch>());
+        stepBatches_.back()->build(*s.sourceField, s.bcs);
     }
 }
 
@@ -163,7 +166,7 @@ Solver::Solver(std::vector<SolverStep> steps,
 // ===========================================================================
 
 void Solver::applyBCsGPU() {
-    for (auto* bc : bcs_) bc->applyOnGPU(equation_.unknown);
+    bcBatch_.applyOnGPU(equation_.unknown);
 }
 
 void Solver::applyBCsCPU() {
@@ -206,7 +209,7 @@ void Solver::eulerUpdateCPU() {
 
 // Helper: copy phi into phi_tmp then apply BCs on phi_tmp
 static void prepTmpGPU(ScalarField& phi_tmp, const ScalarField& phi,
-                        std::vector<BoundaryCondition*>& bcs,
+                        const BCBatch& bcs,
                         const Real* k, double coeff)
 {
     int n = static_cast<int>(phi.storedSize);
@@ -218,7 +221,7 @@ static void prepTmpGPU(ScalarField& phi_tmp, const ScalarField& phi,
         kernel_copy<<<(n + 255) / 256, 256>>>(phi_tmp.d_curr, phi.d_curr, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    for (auto* bc : bcs) bc->applyOnGPU(phi_tmp);
+    bcs.applyOnGPU(phi_tmp);
 }
 
 void Solver::rk4AdvanceGPU() {
@@ -232,7 +235,7 @@ void Solver::rk4AdvanceGPU() {
 
     // k2 = f(phi + dt/2 * k1);
     // Temporarily swap phi_tmp as the unknown for equation evaluation
-    prepTmpGPU(phi_tmp_, phi, bcs_, k1_.d_curr, dt2);
+    prepTmpGPU(phi_tmp_, phi, bcBatch_, k1_.d_curr, dt2);
     // Save real unknown, point equation to phi_tmp_, compute, restore
     {
         ScalarField& saved  = equation_.unknown;   // ref to real phi (same object)
@@ -247,7 +250,7 @@ void Solver::rk4AdvanceGPU() {
     }
 
     // k3 = f(phi + dt/2 * k2)
-    prepTmpGPU(phi_tmp_, phi, bcs_, k2_.d_curr, dt2);
+    prepTmpGPU(phi_tmp_, phi, bcBatch_, k2_.d_curr, dt2);
     {
         Real* orig_ptr = phi.d_curr;
         phi.d_curr       = phi_tmp_.d_curr;
@@ -256,7 +259,7 @@ void Solver::rk4AdvanceGPU() {
     }
 
     // k4 = f(phi + dt * k3)
-    prepTmpGPU(phi_tmp_, phi, bcs_, k3_.d_curr, dt);
+    prepTmpGPU(phi_tmp_, phi, bcBatch_, k3_.d_curr, dt);
     {
         Real* orig_ptr = phi.d_curr;
         phi.d_curr       = phi_tmp_.d_curr;
@@ -332,7 +335,7 @@ void Solver::rk4AdvanceCPU() {
 void Solver::multiStepAdvanceGPU() {
     for (std::size_t i = 0; i < steps_.size(); ++i) {
         auto& s = steps_[i];
-        for (auto* bc : s.bcs) bc->applyOnGPU(*s.sourceField);
+        stepBatches_[i]->applyOnGPU(*s.sourceField);
 
         if (s.type == EquationType::STEADY) {
             // Write RHS directly into the unknown field (overwrite)

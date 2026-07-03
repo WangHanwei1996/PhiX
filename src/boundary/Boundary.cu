@@ -1,6 +1,7 @@
 #include "boundary/PeriodicBC.h"
 #include "boundary/NoFluxBC.h"
 #include "boundary/FixedBC.h"
+#include "boundary/BCBatch.h"
 #include "mesh/Mesh.h"
 
 #include <cuda_runtime.h>
@@ -330,6 +331,125 @@ void FixedBC::applyOnGPU(ScalarField& f) const {
         value);
 
     CUDA_CHECK(cudaGetLastError());
+}
+
+// ===========================================================================
+// BCBatch — all descriptors of one field handled by a single kernel launch.
+// The per-type bodies mirror kernel_periodic / kernel_noflux / kernel_fixed
+// exactly; descriptors write disjoint ghost bands and read only physical
+// cells, so concurrent execution inside one launch is hazard-free.
+// ===========================================================================
+
+__global__ void kernel_bc_batched(Real* data, const BCDesc* descs)
+{
+    const BCDesc d = descs[blockIdx.z];
+
+    const int s0 = blockIdx.x * blockDim.x + threadIdx.x;
+    const int s1 = blockIdx.y * blockDim.y + threadIdx.y;
+    if (s0 >= d.t0_count || s1 >= d.t1_count) return;
+
+    const int face_off = (d.t0_lo + s0) * d.t0_stride
+                       + (d.t1_lo + s1) * d.t1_stride;
+
+    switch (d.type) {
+    case 0:   // periodic — one descriptor fills BOTH sides of its axis
+        for (int g = 1; g <= d.ghost; ++g) {
+            const int lo_ghost  = (d.ghost - g)              * d.axis_stride + face_off;
+            const int lo_source = (d.ghost + d.n_axis - g)   * d.axis_stride + face_off;
+            const int hi_ghost  = (d.ghost + d.n_axis + g - 1) * d.axis_stride + face_off;
+            const int hi_source = (d.ghost + g - 1)          * d.axis_stride + face_off;
+            data[lo_ghost] = data[lo_source];
+            data[hi_ghost] = data[hi_source];
+        }
+        break;
+    case 1:   // no-flux (zero gradient)
+        if (d.is_low) {
+            const int src = d.ghost * d.axis_stride + face_off;
+            for (int g = 1; g <= d.ghost; ++g)
+                data[(d.ghost - g) * d.axis_stride + face_off] = data[src];
+        } else {
+            const int src = (d.ghost + d.n_axis - 1) * d.axis_stride + face_off;
+            for (int g = 1; g <= d.ghost; ++g)
+                data[(d.ghost + d.n_axis + g - 1) * d.axis_stride + face_off] = data[src];
+        }
+        break;
+    default:  // fixed (Dirichlet)
+        if (d.is_low) {
+            for (int g = 1; g <= d.ghost; ++g)
+                data[(d.ghost - g) * d.axis_stride + face_off] = d.value;
+        } else {
+            for (int g = 1; g <= d.ghost; ++g)
+                data[(d.ghost + d.n_axis + g - 1) * d.axis_stride + face_off] = d.value;
+        }
+        break;
+    }
+}
+
+BCBatch::~BCBatch() {
+    if (d_descs_) cudaFree(d_descs_);   // best-effort; no throw in dtor
+}
+
+void BCBatch::build(const ScalarField& layoutRef,
+                    const std::vector<BoundaryCondition*>& bcs)
+{
+    std::vector<BCDesc> descs;
+    fallback_.clear();
+
+    for (BoundaryCondition* bc : bcs) {
+        if (!bc) continue;
+        const PatchParams pp = makePatchParams(layoutRef, bc->patch);
+        BCDesc d{};
+        d.is_low      = (bc->patch.side == Side::LOW) ? 1 : 0;
+        d.t0_count    = pp.t0_count;    d.t1_count = pp.t1_count;
+        d.t0_stride   = pp.t0_stride;   d.t1_stride = pp.t1_stride;
+        d.t0_lo       = pp.t0_lo;       d.t1_lo = pp.t1_lo;
+        d.axis_stride = pp.axis_stride; d.n_axis = pp.n_axis;
+        d.ghost       = pp.ghost;
+        d.value       = Real(0);
+
+        if (dynamic_cast<const PeriodicBC*>(bc)) {
+            d.type = 0;
+        } else if (dynamic_cast<const NoFluxBC*>(bc)) {
+            d.type = 1;
+        } else if (const auto* fx = dynamic_cast<const FixedBC*>(bc)) {
+            d.type  = 2;
+            d.value = static_cast<Real>(fx->value);
+        } else {
+            fallback_.push_back(bc);   // unknown subclass: keep old path
+            continue;
+        }
+        descs.push_back(d);
+    }
+
+    if (d_descs_) { cudaFree(d_descs_); d_descs_ = nullptr; }
+    nDesc_ = static_cast<int>(descs.size());
+    maxT0_ = maxT1_ = 0;
+    for (const auto& d : descs) {
+        maxT0_ = (d.t0_count > maxT0_) ? d.t0_count : maxT0_;
+        maxT1_ = (d.t1_count > maxT1_) ? d.t1_count : maxT1_;
+    }
+    if (nDesc_ > 0) {
+        CUDA_CHECK(cudaMalloc(&d_descs_, nDesc_ * sizeof(BCDesc)));
+        CUDA_CHECK(cudaMemcpy(d_descs_, descs.data(),
+                              nDesc_ * sizeof(BCDesc),
+                              cudaMemcpyHostToDevice));
+    }
+    built_ = true;
+}
+
+void BCBatch::applyOnGPU(ScalarField& f) const
+{
+    if (!built_)
+        throw std::runtime_error("BCBatch::applyOnGPU: build() not called");
+    if (nDesc_ > 0) {
+        if (!f.d_curr)
+            throw std::runtime_error("BCBatch::applyOnGPU: field not on device");
+        dim3 block(16, 16);
+        dim3 grid((maxT0_ + 15) / 16, (maxT1_ + 15) / 16, nDesc_);
+        kernel_bc_batched<<<grid, block>>>(f.d_curr, d_descs_);
+        CUDA_CHECK(cudaGetLastError());
+    }
+    for (BoundaryCondition* bc : fallback_) bc->applyOnGPU(f);
 }
 
 } // namespace PhiX
