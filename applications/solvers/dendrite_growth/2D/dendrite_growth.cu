@@ -65,10 +65,15 @@
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
+#include "IO/PFHubWriter.h"
+#include "field/Reduce.h"
+#include "field/ReducePW.h"
+#include "diagnostics/Interface.h"
 
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <memory>
 #include <string>
 
 // === DEBUG helper: print min/max/mean over physical cells ===================
@@ -216,6 +221,45 @@ int main(int argc, char* argv[])
 
     IO::OutputWriter writer(cfg["output"]);
 
+    // Optional PFHub BM3 CSV (cfg["pfhub"] section):
+    //   time, solid_fraction, free_energy, tip_x
+    //   F = Sum[ 1/2 W(n)^2 |grad phi|^2 - phi^2/2 + phi^4/4
+    //            + lambda*U*phi*(1 - 2phi^2/3 + phi^4/5) ] dV
+    //   tip_x: phi = 0 crossing along the bottom row (dendrite arm on +x axis)
+    std::unique_ptr<IO::PFHubWriter> pfhub;
+    int pfhubEvery = 0;
+    const double dV = dx * dy;
+    auto pfhubSample = [&](double time) {
+        eq_phi_x_cc.advanceSteady(bcs, &phi);    // gradients of CURRENT phi
+        eq_phi_y_cc.advanceSteady(bcs, &phi);
+        const double solidFrac = reduce::fieldSumPW(phi, PHIX_FN (Real p) {
+            return (p + Real(1)) * Real(0.5);
+        }) * dV;
+        double F = reduce::fieldSumPW(phi_x_cc, phi_y_cc,
+            PHIX_FN (Real px, Real py) {
+                const Real theta = atan2(py, px);
+                const Real a = Real(1) + Real(epsilon_m)
+                             * cos(Real(m_order) * (theta - Real(theta_0)));
+                return Real(0.5) * Real(W0_sq) * a * a * (px * px + py * py);
+            });
+        F += reduce::fieldSumPW(phi, U, PHIX_FN (Real p, Real u) {
+            return -Real(0.5) * p * p + Real(0.25) * p * p * p * p
+                   + Real(lambda_val) * u * p
+                     * (Real(1) - Real(2.0 / 3.0) * p * p
+                        + Real(0.2) * p * p * p * p);
+        });
+        const double tipX = interfacePosition(phi, 0, 0, 0, 0.0, true);
+        pfhub->addRow({time, solidFrac, F * dV, tipX});
+    };
+    if (cfg.has("pfhub")) {
+        pfhubEvery = cfg["pfhub"]["energy_interval"];
+        const std::string csvPath = cfg["pfhub"]["csv"];
+        pfhub = std::make_unique<IO::PFHubWriter>(
+            csvPath, std::vector<std::string>{
+                "time", "solid_fraction", "free_energy", "tip_x"});
+        if (start_step == 0) pfhubSample(0.0);
+    }
+
     if (start_step == 0) {
         writer.writeFields(phi, 0, eq_U.time);
         writer.writeFields(U,   0, eq_U.time);
@@ -281,6 +325,8 @@ int main(int argc, char* argv[])
             writer.writeFields(phi, eq_U.step, eq_U.time);
             writer.writeFields(U,   eq_U.step, eq_U.time);
         }
+        if (pfhub && eq_U.step % pfhubEvery == 0)
+            pfhubSample(eq_U.time);
     }
 
     std::cout << "Done.\n";
