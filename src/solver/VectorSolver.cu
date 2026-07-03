@@ -224,7 +224,7 @@ void VectorSolver::rk4AdvanceGPU() {
             dt6, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    if (equation_.stream()) CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 // ===========================================================================
@@ -294,7 +294,7 @@ void VectorSolver::advance() {
         applyBCsGPU();
         equation_.computeRHS(rhs_);
         eulerUpdateGPU();
-        CUDA_CHECK(cudaDeviceSynchronize());
+        if (equation_.stream()) CUDA_CHECK(cudaDeviceSynchronize());
     }
     const int N = equation_.unknown.nComponents();
     for (int c = 0; c < N; ++c)

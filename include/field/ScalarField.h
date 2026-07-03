@@ -58,6 +58,18 @@ public:
     Real* d_prev = nullptr;
 
     // -----------------------------------------------------------------------
+    // Previous-time-level tracking (opt-in since v2.18.0).
+    //
+    // Default OFF: allocDevice() allocates only d_curr (halving device
+    // memory per field) and advanceTimeLevelGPU/CPU are no-ops (saving a
+    // full-field copy per step).  Set trackPrev = true BEFORE allocDevice()
+    // if your model reads the pre-step value (e.g. dphi/dt via
+    // (curr − prev)/dt); the solvers then rotate curr → prev at the end of
+    // every step exactly as before.
+    // -----------------------------------------------------------------------
+    bool trackPrev = false;
+
+    // -----------------------------------------------------------------------
     // Construction / destruction
     // -----------------------------------------------------------------------
     explicit ScalarField(const Mesh& mesh,

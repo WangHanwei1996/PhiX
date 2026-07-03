@@ -128,6 +128,10 @@ private:
     // Allocate all scratch buffers (called once, on first advance)
     void lazyInit_();
 
+    // Full device sync only when some equation uses a non-default stream
+    // (default-stream kernels are ordered without it) — v2.18.0.
+    void maybeSync_() const;
+
     // Apply BCs to all source fields
     void applyAllBCsGPU_();
     void applyAllBCsCPU_();

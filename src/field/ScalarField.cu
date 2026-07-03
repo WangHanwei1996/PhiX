@@ -140,12 +140,16 @@ void ScalarField::fillPrev(double value) {
 // ---------------------------------------------------------------------------
 
 void ScalarField::advanceTimeLevelCPU() {
+    if (!trackPrev) return;   // prev untracked → rotation is a no-op
     std::copy(curr.begin(), curr.end(), prev.begin());
 }
 
 void ScalarField::advanceTimeLevelGPU() {
-    if (!deviceAllocated())
-        throw std::runtime_error("ScalarField::advanceTimeLevelGPU: device not allocated");
+    if (!trackPrev) return;   // prev untracked → rotation is a no-op
+    if (!deviceAllocated() || !d_prev)
+        throw std::runtime_error("ScalarField::advanceTimeLevelGPU: device "
+                                 "not allocated (or trackPrev set after "
+                                 "allocDevice)");
     CUDA_CHECK(cudaMemcpy(d_prev, d_curr,
                           storedSize * sizeof(Real),
                           cudaMemcpyDeviceToDevice));
@@ -159,10 +163,13 @@ void ScalarField::allocDevice() {
     if (deviceAllocated()) return;
     const std::size_t bytes = storedSize * sizeof(Real);
     CUDA_CHECK(cudaMalloc(&d_curr, bytes));
-    CUDA_CHECK(cudaMalloc(&d_prev, bytes));
-    // Initialise GPU memory to zero
     CUDA_CHECK(cudaMemset(d_curr, 0, bytes));
-    CUDA_CHECK(cudaMemset(d_prev, 0, bytes));
+    // The prev buffer costs a full field of device memory and a full D2D
+    // copy per step — only pay for it when the app opted in.
+    if (trackPrev) {
+        CUDA_CHECK(cudaMalloc(&d_prev, bytes));
+        CUDA_CHECK(cudaMemset(d_prev, 0, bytes));
+    }
 }
 
 void ScalarField::freeDevice() {
@@ -183,8 +190,10 @@ void ScalarField::uploadCurrToDevice() const {
 }
 
 void ScalarField::uploadPrevToDevice() const {
-    if (!deviceAllocated())
-        throw std::runtime_error("ScalarField::uploadPrevToDevice: device not allocated");
+    if (!d_prev)
+        throw std::runtime_error("ScalarField::uploadPrevToDevice: prev not "
+                                 "tracked on device (set trackPrev = true "
+                                 "before allocDevice)");
     CUDA_CHECK(cudaMemcpy(d_prev, prev.data(),
                           storedSize * sizeof(Real),
                           cudaMemcpyHostToDevice));
@@ -192,7 +201,7 @@ void ScalarField::uploadPrevToDevice() const {
 
 void ScalarField::uploadAllToDevice() const {
     uploadCurrToDevice();
-    uploadPrevToDevice();
+    if (trackPrev) uploadPrevToDevice();
 }
 
 void ScalarField::downloadCurrFromDevice() {
@@ -204,8 +213,10 @@ void ScalarField::downloadCurrFromDevice() {
 }
 
 void ScalarField::downloadPrevFromDevice() {
-    if (!deviceAllocated())
-        throw std::runtime_error("ScalarField::downloadPrevFromDevice: device not allocated");
+    if (!d_prev)
+        throw std::runtime_error("ScalarField::downloadPrevFromDevice: prev "
+                                 "not tracked on device (set trackPrev = "
+                                 "true before allocDevice)");
     CUDA_CHECK(cudaMemcpy(prev.data(), d_prev,
                           storedSize * sizeof(Real),
                           cudaMemcpyDeviceToHost));
@@ -213,7 +224,7 @@ void ScalarField::downloadPrevFromDevice() {
 
 void ScalarField::downloadAllFromDevice() {
     downloadCurrFromDevice();
-    downloadPrevFromDevice();
+    if (trackPrev) downloadPrevFromDevice();
 }
 
 // ---------------------------------------------------------------------------

@@ -83,11 +83,14 @@ static double timeEulerStep(int N, int warmup, int iters) {
     for (int i = 0; i < warmup; ++i) solver.advance();
     cudaDeviceSynchronize();
 
-    perf::WallTimer t;   // advance() ends device-synchronised — wall time is fair
+    // advance() is asynchronous since v2.18.0 — bracket the loop with a
+    // device sync so the wall time covers the actual GPU work.
+    perf::WallTimer t;
     for (int i = 0; i < iters; ++i) {
         PHIX_NVTX_RANGE("bench/eulerStep");
         solver.advance();
     }
+    cudaDeviceSynchronize();
     return t.seconds() * 1e3 / iters;
 }
 

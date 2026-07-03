@@ -6,3 +6,8 @@ add_executable(module_reduce test_reduce.cu)
 target_link_libraries(module_reduce PRIVATE phix)
 set_target_properties(module_reduce PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_reduce COMMAND module_reduce)
+
+add_executable(module_timelevel test_timelevel.cu)
+target_link_libraries(module_timelevel PRIVATE phix)
+set_target_properties(module_timelevel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_timelevel COMMAND module_timelevel)

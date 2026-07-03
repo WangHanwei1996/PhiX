@@ -21,6 +21,19 @@ namespace PhiX {
                 + cudaGetErrorString(_e));                                     \
     } while (0)
 
+// ---------------------------------------------------------------------------
+// Per-step device synchronisation policy (v2.18.0):
+// All solver kernels are issued on the CUDA default stream and are therefore
+// ordered without explicit synchronisation — the per-step DeviceSynchronize
+// only serialised the host against the GPU and cost a full pipeline drain
+// (expensive on WSL2).  It is kept ONLY when the equation was given a
+// non-default stream (cross-stream ordering is then the caller's contract).
+// Host-side readers (downloads, reductions) block on the stream anyway.
+// ---------------------------------------------------------------------------
+static void syncIfStreamed(const Equation& eq) {
+    if (eq.stream()) CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 // ===========================================================================
 // GPU kernels
 // ===========================================================================
@@ -257,7 +270,7 @@ void Solver::rk4AdvanceGPU() {
         k1_.d_curr, k2_.d_curr, k3_.d_curr, k4_.d_curr,
         dt6, n);
     CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
+    syncIfStreamed(equation_);
 }
 
 // ===========================================================================
@@ -333,7 +346,7 @@ void Solver::multiStepAdvanceGPU() {
                 stepScratch_[i]->d_curr,
                 dt, n);
             CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
+            syncIfStreamed(*s.equation);
         }
     }
     for (auto& s : steps_)
@@ -401,7 +414,7 @@ void Solver::advance() {
                 dt = adapt_.propose(dt, adapt_.lastMaxRate);
             }
             eulerUpdateGPU();
-            CUDA_CHECK(cudaDeviceSynchronize());
+            syncIfStreamed(equation_);
         }
         equation_.unknown.advanceTimeLevelGPU();
     }

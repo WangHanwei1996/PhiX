@@ -122,6 +122,21 @@ void EquationSystem::lazyInit_()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-step device synchronisation policy (v2.18.0): kernels run on the
+// default stream and are ordered without explicit sync; a full
+// DeviceSynchronize is only needed when some equation uses its own stream.
+// ---------------------------------------------------------------------------
+
+void EquationSystem::maybeSync_() const
+{
+    for (const auto& e : entries_)
+        if (e.equation->stream()) {
+            CUDA_CHECK(cudaDeviceSynchronize());
+            return;
+        }
+}
+
 // ===========================================================================
 // Apply all BCs
 // ===========================================================================
@@ -175,7 +190,7 @@ void EquationSystem::eulerAdvanceGPU_()
             dt, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    maybeSync_();
 
     for (auto& e : entries_)
         e.equation->unknown.advanceTimeLevelGPU();
@@ -250,7 +265,7 @@ void EquationSystem::rk4AdvanceGPU_()
             k1_[i]->d_curr, dt2, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    maybeSync_();
     // Apply BCs to phi_tmp (temporarily swap d_curr so bc->applyOnGPU works)
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
@@ -279,7 +294,7 @@ void EquationSystem::rk4AdvanceGPU_()
             k2_[i]->d_curr, dt2, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    maybeSync_();
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
         Real* orig = sf.d_curr;
@@ -305,7 +320,7 @@ void EquationSystem::rk4AdvanceGPU_()
             k3_[i]->d_curr, dt, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    maybeSync_();
     for (std::size_t i = 0; i < N; ++i) {
         auto& sf  = *entries_[i].sourceField;
         Real* orig = sf.d_curr;
@@ -332,7 +347,7 @@ void EquationSystem::rk4AdvanceGPU_()
             dt6, n);
         CUDA_CHECK(cudaGetLastError());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
+    maybeSync_();
 
     for (auto& e : entries_)
         e.equation->unknown.advanceTimeLevelGPU();
