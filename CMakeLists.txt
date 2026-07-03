@@ -112,6 +112,7 @@ add_library(phix STATIC
     src/material/KKS.cu
     src/material/KKSAntiTrapping.cu
     src/material/BinaryAlloy.cu
+    src/lbm/LBM.cu
 )
 
 target_include_directories(phix PUBLIC
