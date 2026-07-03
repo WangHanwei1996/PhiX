@@ -258,6 +258,77 @@ int main() {
         try { bad.validate(); } catch (const std::invalid_argument&) { threw = true; }
         require(threw, "eps >= 0.3 did not throw");
 
+        // ---- rotation: cubic-group invariance + genuine effect ----------
+        {
+            Mesh mesh = Mesh::makeUniform3D(CoordSys::CARTESIAN,
+                                            16, 1.0/16, 0.0, 16, 1.0/16, 0.0,
+                                            16, 1.0/16, 0.0);
+            ScalarField phi(mesh, "phi", 1);
+            fillAll3D(phi, [](double x, double y, double z) {
+                return std::sin(4.0*x + 0.3) * std::cos(3.0*y)
+                     * std::cos(5.0*z + 0.7);
+            });
+
+            auto rhsFor = [&](const Aniso3DParams& ap) {
+                ScalarField r(mesh, "r", 1);
+                r.allocDevice();
+                Equation eq(phi, "rot");
+                eq.setRHS(anisoDiv3D(phi, ap));
+                eq.computeRHS(r);
+                r.downloadCurrFromDevice();
+                return r;
+            };
+
+            Aniso3DParams id;   id.eps = 0.06;
+            Aniso3DParams r90;  r90.eps = 0.06;
+            r90.setEulerZXZ(M_PI / 2.0, 0.0, 0.0);   // 90° about z ∈ cubic group
+            Aniso3DParams r45;  r45.eps = 0.06;
+            r45.setEulerZXZ(M_PI / 4.0, 0.0, 0.0);   // 45° — NOT a symmetry
+
+            ScalarField a = rhsFor(id), b = rhsFor(r90), c45 = rhsFor(r45);
+            double devSym = 0.0, devRot = 0.0, scale = 0.0;
+            for (int k = 0; k < 16; ++k)
+            for (int j = 0; j < 16; ++j)
+            for (int i = 0; i < 16; ++i) {
+                const std::size_t idx =
+                    static_cast<std::size_t>(a.index(i, j, k));
+                scale = std::max(scale, std::fabs(
+                    static_cast<double>(a.curr[idx])));
+                devSym = std::max(devSym, std::fabs(
+                    static_cast<double>(a.curr[idx]) - b.curr[idx]));
+                devRot = std::max(devRot, std::fabs(
+                    static_cast<double>(a.curr[idx]) - c45.curr[idx]));
+            }
+            require(devSym < 1e-10 * scale,
+                    "90° z-rotation (cubic symmetry) changed the result: "
+                    + std::to_string(devSym));
+            require(devRot > 1e-4 * scale,
+                    "45° rotation had no effect — rotation not applied?");
+
+            // rotated factor point check: lab <110> at 45° z-rotation is
+            // crystal <100> → a = 1 + ε
+            Aniso3DParams pf;
+            pf.eps = 0.07;
+            pf.setEulerZXZ(M_PI / 4.0, 0.0, 0.0);
+            const double inv = 1.0 / std::sqrt(2.0);
+            const double px = inv, py = inv, pz = 0.0;
+            const double cx = pf.R[0]*px + pf.R[1]*py + pf.R[2]*pz;
+            const double cy = pf.R[3]*px + pf.R[4]*py + pf.R[5]*pz;
+            const double cz = pf.R[6]*px + pf.R[7]*py + pf.R[8]*pz;
+            require(std::fabs(aniso::factor3D(cx, cy, cz, pf.eps)
+                              - (1.0 + pf.eps)) < 1e-12,
+                    "rotated <110> is not crystal <100>");
+
+            // garbage R must be rejected
+            Aniso3DParams badR;
+            badR.eps = 0.05;
+            badR.R[0] = 2.0;
+            bool threwR = false;
+            try { badR.validate(); }
+            catch (const std::invalid_argument&) { threwR = true; }
+            require(threwR, "non-orthonormal R did not throw");
+        }
+
         // 2D mesh must be rejected
         Mesh m2 = Mesh::makeUniform2D(CoordSys::CARTESIAN,
                                       8, 0.1, 0.0, 8, 0.1, 0.0);

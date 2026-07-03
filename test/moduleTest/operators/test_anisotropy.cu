@@ -16,9 +16,11 @@
 #include "operators/FaceOps.h"
 #include "operators/Laplacian.h"
 #include "equation/Equation.h"
+#include "solver/Solver.h"
 #include "boundary/PeriodicBC.h"
 #include "boundary/BCBatch.h"
 #include "field/ScalarField.h"
+#include "field/Reduce.h"
 
 #include <cmath>
 #include <cstdio>
@@ -288,6 +290,73 @@ int main() {
         bad.eps = 1.5;
         try { bad.validate(); } catch (const std::invalid_argument&) { threw = true; }
         require(threw, "eps >= 1 did not throw");
+    }
+
+    // =======================================================================
+    // 6. Eggleston convexification (strong anisotropy)
+    // =======================================================================
+    {
+        // (a) matching conditions: γ̃ and γ̃' continuous at θ_m; γ̃+γ̃'' ≡ 0
+        const double eps = 0.15;
+        const int    m   = 4;                 // limit 1/15 ≈ 0.067 < 0.15
+        const AnisoReg r = anisoComputeRegularization(eps, m);
+        require(r.thetaM > 0.0, "supercritical eps produced thetaM == 0");
+        const double g  = 1.0 + eps * std::cos(m * r.thetaM);
+        const double gp = -eps * m * std::sin(m * r.thetaM);
+        require(std::fabs(r.A * std::cos(r.thetaM) - g) < 1e-12,
+                "Eggleston C0 matching failed");
+        require(std::fabs(-r.A * std::sin(r.thetaM) - gp) < 1e-12,
+                "Eggleston C1 matching failed");
+
+        // sub-critical: no-op
+        const AnisoReg r0 = anisoComputeRegularization(0.03, 4);
+        require(r0.thetaM == 0.0, "sub-critical eps produced a cone");
+
+        // (b) regularize=true below the limit gives identical results
+        ScalarField phi(mesh, "phi", 1);
+        fillAll(phi, blob);
+        AnisoParams pOff;
+        pOff.eps = 0.04;
+        AnisoParams pOn = pOff;
+        pOn.regularize = true;
+        ScalarField rOff(mesh, "roff", 1), rOn(mesh, "ron", 1);
+        rOff.allocDevice();
+        rOn.allocDevice();
+        Equation eOff(phi, "off");
+        eOff.setRHS(anisoDiv(phi, pOff));
+        eOff.computeRHS(rOff);
+        Equation eOn(phi, "on");
+        eOn.setRHS(anisoDiv(phi, pOn));
+        eOn.computeRHS(rOn);
+        require(maxDiffPhys(rOff, rOn) == 0.0,
+                "sub-critical regularize flag changed results");
+
+        // (c) strong-eps evolution smoke: regularized AC blob stays finite
+        //     and bounded over an explicit run at eps = 0.15
+        ScalarField ph2(mesh, "ph2", 1);
+        fillAll(ph2, blob);
+        AnisoParams strong;
+        strong.W0 = 1.0;
+        strong.eps = 0.15;
+        strong.m = 4;
+        strong.regularize = true;
+
+        Equation eq(ph2, "acReg");
+        eq.setRHS(anisoDiv(ph2, strong)
+                  + pw(ph2, PHIX_FN (Real v) {
+                        return -Real(50) * Real(2) * v * (Real(1) - v)
+                               * (Real(1) - Real(2) * v);
+                    }));
+        PeriodicBC bx2(mesh.facePatch(Axis::X, Side::LOW));
+        PeriodicBC by2(mesh.facePatch(Axis::Y, Side::LOW));
+        Solver solver(eq, {&bx2, &by2},
+                      0.2 * (1.0 / 96) * (1.0 / 96), TimeScheme::EULER);
+        solver.run(400);
+        require(!reduce::fieldHasNonFinite(ph2),
+                "regularized strong-eps run produced NaN/Inf");
+        const double mx = reduce::fieldMaxAbs(ph2);
+        require(mx < 2.0, "regularized strong-eps run unbounded: max = "
+                          + std::to_string(mx));
     }
 
     return 0;

@@ -51,8 +51,23 @@ struct AnisoParams {
     int    m      = 4;     // fold symmetry
     double theta0 = 0.0;   // preferred growth orientation
 
+    // Eggleston convexification (Eggleston, McFadden & Braun, Physica D
+    // 150 (2001) 91): beyond the convexity limit ε > 1/(m²−1) the
+    // stiffness γ+γ'' turns negative in cones of half-angle θ_m around the
+    // γ-maxima (missing orientations, ill-posed evolution).  With
+    // regularize = true those cones use the marginally-stable continuation
+    //     γ̃(δ) = A·cos(δ),  A = γ(θ_m)/cos(θ_m)   (γ̃+γ̃'' ≡ 0),
+    // C¹-matched at δ = ±θ_m via  tan(θ_m) = ε·m·sin(m·θ_m)/γ(θ_m)
+    // (solved once on the host).  Below the limit the flag is a no-op.
+    bool regularize = false;
+
     void validate() const;   // throws std::invalid_argument
 };
+
+// θ_m and A of the Eggleston continuation for (eps, m); θ_m == 0 (no-op)
+// below the convexity limit.  Exposed for testing/diagnostics.
+struct AnisoReg { double thetaM; double A; };
+AnisoReg anisoComputeRegularization(double eps, int m);
 
 namespace aniso {
 
@@ -88,7 +103,19 @@ struct Aniso3DParams {
     double W0  = 1.0;    // gradient-energy prefactor (flux carries W0²)
     double eps = 0.0;    // cubic anisotropy strength ε₄
 
-    void validate() const;   // throws std::invalid_argument
+    // Crystal orientation: R maps LAB gradients into the CRYSTAL frame
+    // (row-major 3×3, defaults to identity = axis-aligned).  The flux is
+    // evaluated in the crystal frame and rotated back:
+    //     J_lab = W0²·a·[ a·p_lab + Rᵀ·v_c ],
+    //     v_c,i = 16ε·p_c,i·(n_c,i² − S),   p_c = R·p_lab.
+    double R[9] = {1, 0, 0,  0, 1, 0,  0, 0, 1};
+
+    // Bunge z-x-z Euler angles (radians) → R.
+    void setEulerZXZ(double phi1, double Phi, double phi2);
+
+    void validate() const;   // throws (also checks R orthonormality);
+                             // NOTE: strong-ε convexification is 2D-only
+                             // for now — 3D keeps the ε < 0.3 hard bound.
 };
 
 namespace aniso {
