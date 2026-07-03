@@ -1,0 +1,78 @@
+{
+    // ============================================================
+    //  stage-3 复现配置（非量纲，源自 develop/CH+AC double-well 算例 + run.log/output.3）
+    //  跑 stage-3 参数与表。mu 用完整两侧形式（已改求解器）：
+    //    mu = dfLdc*(1-h(phi)) + dfSdc*h(phi)
+    //  固相 phi=1 时 mu=dfSdc → c 在固相趋向 cb（∂mu/∂c 不再为 0，消除退化）。
+    //  备份: settings/settings.jsonc.bak_20260616_141208（SI / stage-5）
+    // ============================================================
+    "mesh": {
+        "nx": 200,          // x 方向格点数
+        "ny": 200,          // y 方向格点数
+        "dx": 1.0,          // [-] 格距（非量纲，= CH+AC double-well 算例）
+        "dy": 1.0,          // [-]
+        "x0": 0.0,
+        "y0": 0.0
+    },
+
+    "initialize": {
+        "start_from": "initial_field",     // "initial_field" 从初始场开始，或填步数续算
+        "dt"        : 0.001,               // [-] 显式 Euler（= CH+AC 算例；run.log/output.3 已验证 1e6 步稳定）
+        "nSteps"    : 10000              // stage-3 跑满 1e6 步（T 由 1500 缓冷到 500）
+    },
+
+    "boundary_conditions": {
+        "x_min": "Periodic",
+        "x_max": "Periodic",
+        "y_min": "Periodic",
+        "y_max": "Periodic"
+    },
+
+    // stage-3 模型（doc/modeling_stage3.md，非量纲测试式，表由 test/gen_free_energy_tables.py 生成）：
+    //   f_L(c,T) = rho^2(c-ca)^2 + s_L(T-T_m),  ca=0.3, s_L=2e-4
+    //   f_S(c,T) = rho^2(c-cb)^2 + s_S(T-T_m),  cb=0.7, s_S=6e-4,  rho=√2, T_m=1000
+    //   dfLdc    = 2*rho^2*(c-ca) = 4*(c-0.3)（与 T 无关）
+    //   dfSdc    = 2*rho^2*(c-cb) = 4*(c-0.7)（与 T 无关）
+    //   网格 nc=200, nT=16, c∈[0,1], T∈[300,1800] K
+    //   mu = dfLdc*(1-h(phi)) + dfSdc*h(phi)（两侧；固相 phi=1 时 mu=dfSdc → c 趋向 cb）
+    "tables": {
+        "fL"   : "tables/fL.fetab",
+        "fS"   : "tables/fS.fetab",
+        "dfLdc": "tables/dfLdc.fetab",
+        "dfSdc": "tables/dfSdc.fetab"
+    },
+
+    "constants": {
+        "T_start"      : 1400.0,        // [K] 初始温度（>T_m=1000 → 起始液相占优；run.log 反推）
+        "cooling_rate" : 40.0,           // [K/无量纲时间] T(t)=T_start-rate*t；1e6 步×dt=1e3 → 扫到 T=500 K
+        "eps_sq": 3.0,                  // [-] eps^2，|grad phi|^2 系数（= CH+AC 的 kappa_eta）
+        "M_c"   : 5.0,                  // [-] Cahn-Hilliard 成分迁移率（= CH+AC 的 M）
+        "w_phi" : 1.0,                  // [-] phi 双井势垒高度（= CH+AC 的 w）
+
+        // M_phi 在 stage-3 是常数；当前求解器只有 Arrhenius 形式 M_phi=M_phi_pref*exp(-Q_phi/(R*T))，
+        // 故取 Q_phi=0 → M_phi ≡ M_phi_pref，等效常数（不动求解器即可复现）。
+        "R_gas"      : 8.314,
+        "M_phi_pref" : 5.0,             // [-] M_phi 常数值（= CH+AC 的 L）
+        "Q_phi"      : 0.0,             // [J/mol] 0 → M_phi(T) 恒为 M_phi_pref（无温度依赖）
+
+        // ↓↓↓ stage 6 键（仅 GFA_evo 使用；GFA_binary 忽略）。stage-3 无 eta，仅占位 ↓↓↓
+        "T_g"        : 700.0,
+        "alpha"      : 0.45,
+        "Vm"         : 1.0580e-5,
+        "M_eta"      : 1.0,
+        "w_eta"      : 1.0,
+        "beta_sq"    : 3.0,
+        "w_ex"       : 1.0,
+
+        // mu 的固相项 ∂f_S/∂c = 2*rho_s^2*(c-c_s)（仅 GFA_evo 用；解析式，非查表）
+        //   默认与 fS.fetab 固相模型一致: f_S = rho_s^2*(c-c_s)^2 + ...，rho_s=√2, c_s=cb=0.7
+        "rho_s"      : 1.4142135623730951,
+        "c_s"        : 0.7
+    },
+
+    "output": {
+        "print_interval": 10,        // = CH+AC/run.log（1e6 步 → 100 次打印）
+        "write_interval": 1000,       // = run.log（对齐归档 output.3：11 帧）
+        "format"        : "VTK"         // "BINARY" | "DAT" | "VTK" | "ALL"
+    }
+}

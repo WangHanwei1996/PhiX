@@ -77,7 +77,7 @@ int main(int argc, char* argv[])
     mu.uploadAllToDevice();
 
     // === 4. Boundary conditions ==============================================
-    auto  bcSet = buildBCs(cfg["boundary_conditions"]);
+    auto  bcSet = buildBCs(mesh, cfg["boundary_conditions"]);
     auto& bcs   = bcSet.ptrs;
 
     // === 5. Equations ========================================================

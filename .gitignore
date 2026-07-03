@@ -51,6 +51,13 @@ applications/solvers/Cahn-Hillard_double-well/2D/Cahn-Hillard_double-well
 applications/solvers/glass_formation_4_phases/2D/GFA_4ph
 applications/solvers/dendrite_growth/2D/dendrite_growth
 applications/tools/test/div_field
+applications/solvers/GFA_binary/GFA_binary
+applications/solvers/GFA_binary/GFA_evo
+applications/solvers/GFA_FeB/GFA_FeB
+develop/Ostwald_Ripening/ostwald_ripening
+develop/fieldOperation/test_fieldops
+test/sampleTest/diffusion_1D/diffusion_1D
+test/sampleTest/diffusion_1D/diffusion_compare
 
 # Python cache
 __pycache__/
@@ -66,9 +73,14 @@ __pycache__/
 # Windows metadata
 *:Zone.Identifier
 *Zone.Identifier
+*:Zone*.Identifier
 
-# Simulation logs
+# Simulation logs / stray backups / local agent settings
 run.log
+*.log
+applications/solvers/GFA_binary/test/log_*
+*.bak_*
+.claude/settings.local.json
 
 # Video outputs
 *.mp4

@@ -1,0 +1,84 @@
+{
+    "mesh": {
+        "nx": 200,          // x 方向格点数（域 = 200×0.6 = 120 nm）
+        "ny": 200,          // y 方向格点数
+        "dx": 6.0e-10,      // [m] 0.6 nm（stage-5 真实尺度，log_1e7 验证）；界面 δ=sqrt(2*eps_sq/w_phi)≈1.85 nm ≈ 3 格
+        "dy": 6.0e-10,      // [m]
+        "x0": 0.0,          // x 方向原点
+        "y0": 0.0           // y 方向原点
+    },
+
+    "initialize": {
+        "start_from": "initial_field",     // "initial_field" 从初始场开始，或填写时间步数以续算
+        "dt"        : 2.0e-11,             // [s] 显式 Euler（stage-5 实跑值，dx=0.6nm）：
+                                           //   CH(c) 稳定限 dt<~7e-11 (c=0.5)，取 2e-11 留 ~3.5× 余量；
+                                           //   AC(phi) 梯度限更宽松。log_1e7 已验证此组合稳定
+        "nSteps"    : 10000
+    },
+
+    "boundary_conditions": {
+        "x_min": "Periodic",
+        "x_max": "Periodic",
+        "y_min": "Periodic",
+        "y_max": "Periodic"
+    },
+
+    // 模型见 ../doc/modeling_stage5.md（stage 5：Arrhenius 温度依赖 AC 迁移率）：
+    //   f = f_L(c,T)[1-h(phi)] + f_S(c,T)h(phi) + w_phi*g(phi) + (eps^2/2)|grad phi|^2
+    //   f_L、f_S、dfL/dc 全部查表，数据来自 data/material_properties/Cu-Zr/：
+    //     f_L_table.csv    64×64, c∈[0.001,0.999], T∈[500,2000] K   （CALPHAD 液相）
+    //     f_S_table.csv    1×64,  c=0.5 固定,      T∈[500,2000] K   （化学计量 B2-CuZr）
+    //     dfdc_L_table.csv 64×64（解析 ∂f_L/∂c，避免对熵项做数值差分）
+    //   f_S 无 c 依赖 ⇒ mu = dfL/dc·(1-h(phi))，无 ∂f_S/∂c 项。
+    //   温度协议: T(t) = T_start - cooling_rate*t，钳制到 f_L 表范围 [500,2000] K。
+    //   AC 迁移率随温度变化（每步按 T 计算，参数 M_phi_pref/Q_phi/R_gas 由 constants 给出）：
+    //     M_phi(T) = M_phi_pref·exp(-Q_phi/(R_gas·T)) [m³/(J·s)]
+    //     按 doc 取值时量级参考: 800 K → 1.6e-8, 1100 K → 5.0e-6, 1300 K → 5.3e-5
+    "tables": {
+        "fL"   : "../../../../data/material_properties/Cu-Zr/f_L_table.csv",
+        "fS"   : "../../../../data/material_properties/Cu-Zr/f_S_table.csv",
+        "dfLdc": "../../../../data/material_properties/Cu-Zr/dfdc_L_table.csv"
+    },
+
+    "constants": {
+        "T_start"      : 1100.0,        // [K] 初始温度（过热熔体；由表得 T_m(c=0.5)≈1521 K）
+        "cooling_rate" : 0,         // [K/s] 0 = 等温。取临界冷却速率附近：
+                                        //   表算 TTT 鼻尖 T≈1400 K，τ≈1e-4 s ⇒ R_c≈2-3e6 K/s；
+                                        //   5e6 略高于 R_c（预期玻璃化），减小可探索结晶分支
+        "eps_sq": 0.7e-9,               // [J/m]    eps^2，|grad phi|^2 梯度能系数（stage-5 基准值）
+                                        //          dx=0.6nm 下界面 δ=sqrt(2*eps_sq/w_phi)≈1.85nm≈3 格
+        "M_c"   : 1.0e-9,              // [m^5/(J·s)] Cahn-Hilliard 成分迁移率（GFA_4ph M_c）
+        "w_phi" : 4.41e2,                // [J/m^3]  双井势垒高度（GFA_4ph w02，液-CuZr）
+
+        // Arrhenius AC 迁移率参数 M_phi(T) = M_phi_pref·exp(-Q_phi/(R_gas·T))
+        "R_gas"      : 8.314,           // [J/(mol·K)] 气体常数
+        "M_phi_pref" : 2.0e-9,            // [m^3/(J·s)] 指前因子（doc/modeling_stage5.md）
+        "Q_phi"      : 0,         // [J/mol]     激活能（doc/modeling_stage5.md）
+
+        // ↓↓↓ stage 6 新增（仅 GFA_evo 使用；GFA_binary 忽略这些键）↓↓↓
+        // 见 ../doc/modeling_stage6.md：新增非晶序参量 eta 及 phi-eta 耦合
+        // 非晶→液体驱动: dfAmL = R_gas·T·ln(1+alpha)·f(tau)/Vm, tau=T/T_g
+        //   doc 形式 R·T·ln(1+alpha)·f(tau) 为 [J/mol]，除以摩尔体积 Vm 化为
+        //   [J/m^3]，与 f_S-f_L 量纲一致（表格已存 Gm/Vm，单位 J/m^3）。
+        "T_g"        : 700.0,           // [K]  玻璃转变温度（doc）
+        "alpha"      : 0.45,            // [-]  驱动力幅值（doc）
+        "Vm"         : 1.0580e-5,       // [m^3/mol] 摩尔体积（液相 Vm_0，取自 f_L 表头）
+        // eta 的 Allen-Cahn 参数（M_eta 为常数）。已从早先非 SI 的占位值改到 SI 尺度，
+        // 与晶体侧 (w_phi, eps_sq) 同量级，否则 beta_sq 给出米级界面且显式 Euler 直接发散。
+        "M_eta"      : 0.0,            // [m^3/(J·s)] eta AC 迁移率（常数）
+        "w_eta"      : 10.0,          // [J/m^3]  eta 双井势垒高度（取同 w_phi）
+        "beta_sq"    : 1.0e-4,         // [J/m]    beta^2，|grad eta|^2（stage-5 基准值）；dx=0.6nm 下 δ_eta≈1.85nm≈3 格
+        "w_ex"       : 100.0,          // [J/m^3]  phi-eta 交叉耦合系数（与势垒同量级，两相才互斥）
+
+        // GFA_evo mu 的固相项 ∂f_S/∂c = 2*rho_s^2*(c-c_s)（必填；缺键直接报错，无缺省）
+        "rho_s"      : 1.0e4,          // [sqrt(J/m^3)] 占位，待调；rho_s^2 = f_S 的 c-曲率（SI 量级 ~1e8-9）
+        "c_s"        : 0.5             // [-] f_S 极小值成分
+    },
+
+    "output": {
+        "print_interval": 100,          // 打印进度的步数间隔（含 diag 段有 GPU 下载开销，
+                                           //   间隔过密会显著拖慢长算例）
+        "write_interval": 1000,         // 写出数据的步数间隔（全程 14 帧）
+        "format"        : "VTK"            // "BINARY" | "DAT" | "VTK" | "ALL"
+    }
+}

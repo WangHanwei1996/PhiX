@@ -1,4 +1,6 @@
-add_executable(CH_AC_2D "CH+AC_double-well.cu")
+# [makePhi generated]
+
+add_executable(CH_AC_2D CH_AC_2D.cu)
 
 target_link_libraries(CH_AC_2D PRIVATE phix)
 

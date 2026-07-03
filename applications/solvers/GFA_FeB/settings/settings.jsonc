@@ -1,0 +1,81 @@
+{
+    // ============================================================
+    //  GFA_FeB — Fe-B (Fe2B) glass-formation solver
+    //  模型同 GFA_evo（CH + 双序参量 AC）。本文件是 Fe-B 模板：
+    //  晶相取稳定线化合物 Fe2B（c_B = 1/3）。标定方法见
+    //  ../../GFA_binary/doc/calibration_plan.md。
+    //  注意：tables 下的 Fe-B CALPHAD 表尚未生成（见 doc 任务3），
+    //  生成前本算例无法运行；编译不受影响。
+    // ============================================================
+
+    "mesh": {
+        "nx": 200, "ny": 200,
+        "dx": 1.0, "dy": 1.0,     // [m] 标定阶段为裸尺度，非物理 nm
+        "x0": 0.0, "y0": 0.0
+    },
+
+    "initialize": {
+        "start_from": "initial_field",
+        "dt"        : 1.0e-13,
+        "nSteps"    : 10000
+    },
+
+    "boundary_conditions": {
+        "x_min": "Periodic", "x_max": "Periodic",
+        "y_min": "Periodic", "y_max": "Periodic"
+    },
+
+    // Fe-B CALPHAD 表（待生成）：液相 f_L(c,T)、Fe2B 固相 f_S(T)、解析 ∂f_L/∂c。
+    // 由 Fe-B 评估构建：Tokunaga et al., Calphad 28 (2004) 354；
+    //                  Hallemans et al., Z. Metallkd. 85 (1994) 676。
+    "tables": {
+        "fL"   : "tables/f_L_FeB.csv",
+        "fS"   : "tables/f_S_Fe2B.csv",
+        "dfLdc": "tables/dfdc_L_FeB.csv"
+    },
+
+    "constants": {
+        // --- 温度协议（标定先等温）---
+        "T_start"      : 1200.0,   // [K] 两相区(Tg<T<Tm)；Fe2B Tm≈1424K(母本)/共晶≈1447K
+        "cooling_rate" : 0,        // [K/s] 0 = 等温
+
+        // --- 晶相界面参数（待标定，见 calibration_plan.md ②）---
+        // eps_sq=3σδ, w_phi=6σ/δ（项目约定 δ=√(2eps_sq/w_phi)）；σ_SL(Fe2B)从文献/Turnbull
+        "eps_sq" : 3.0e10,         // [J/m]   占位
+        "w_phi"  : 1.0e10,         // [J/m^3] 占位
+
+        // --- 成分迁移率（待标定，M_c = D/χ）---
+        "M_c"    : 5.0,            // [m^5/(J·s)] 占位
+
+        // --- Arrhenius 晶体 AC 迁移率（母本 Fe-B: 22.1·exp(-140e3/RT)）---
+        "R_gas"      : 8.314,
+        "M_phi_pref" : 22.1,       // [m^3/(J·s)] 母本 Fe-B 值（待重标）
+        "Q_phi"      : 140.0e3,    // [J/mol]     母本 Fe-B 值（待重标）
+
+        // --- 非晶序参量 eta（母本 Fe75B25 值，待标定）---
+        "M_eta"      : 1.0,        // [m^3/(J·s)]
+        "w_eta"      : 10.0,       // [J/m^3]
+        "beta_sq"    : 1.0e-4,     // [J/m]
+        "w_ex"       : 1.0e2,      // [J/m^3] phi-eta 交叉耦合（晶-非晶界面，单独标）
+
+        // --- 非晶→液驱动力 dfAmL = R*T*ln(1+alpha)*f(tau)/Vm, tau=T/T_g ---
+        "T_g"        : 710.0,      // [K]  Fe-25%B（母本）；Fe83B17≈760K
+        "alpha"      : 0.45,       // [-]  Shao, J. Appl. Phys. 88 (2001) 4443
+        "Vm"         : 1.05e-5,    // [m^3/mol] Fe-B 摩尔体积（母本 Table 1）
+
+        // --- 固相项 ∂f_S/∂c = 2*rho_s^2*(c-c_s)；Fe2B 线化合物 ---
+        "rho_s"      : 1.4142135623730951,  // 占位，rho_s^2 = f_S c-曲率（待标）
+        "c_s"        : 0.3333333333333333   // Fe2B 化学计量 c_B = 1/3
+    },
+
+    "output": {
+        "print_interval": 100,
+        "write_interval": 1000,
+        "format"        : "VTK"
+    },
+
+    "diagnostics": {
+        "diag_phi": true,
+        "diag_eta": true
+    }
+}

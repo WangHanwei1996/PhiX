@@ -98,7 +98,6 @@ add_subdirectory(test/sampleTest)
 # ---------------------------------------------------------------------------
 # Applications
 # ---------------------------------------------------------------------------
-# add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
 # add_subdirectory("applications/solvers/glass_formation/2D")
 # add_subdirectory("applications/solvers/GFA/verification0")
 add_subdirectory("applications/solvers/dendrite_growth/2D")
@@ -107,6 +106,9 @@ add_subdirectory("applications/solvers/dendrite_growth/dendrite_growth_flag")
 # add_subdirectory("develop/Ostwald_Ripening")
 # add_subdirectory("develop/fieldOperation")
 # add_subdirectory("applications/tools/test")
-add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
 add_subdirectory("applications/solvers/glass_formation_4_phases/2D")
 add_subdirectory("applications/solvers/MPF_AC_DW")
+add_subdirectory("applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D")
+add_subdirectory("applications/solvers/Cahn-Hillard_double-well/2D")
+add_subdirectory("applications/solvers/GFA_binary")
+add_subdirectory("applications/solvers/GFA_FeB")

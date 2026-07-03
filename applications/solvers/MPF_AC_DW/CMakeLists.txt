@@ -1,4 +1,6 @@
-add_executable(MPF_AC_DW "MPF_AC_DW.cu")
+# [makePhi generated]
+
+add_executable(MPF_AC_DW MPF_AC_DW.cu)
 
 target_link_libraries(MPF_AC_DW PRIVATE phix)
 

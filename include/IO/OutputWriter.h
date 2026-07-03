@@ -57,6 +57,10 @@ private:
     bool writeDat_;
     bool writeVtk_;
 
+    // Multiplies VTS node coordinates (e.g. 1e9 → nm) for ParaView visibility
+    // of nm-scale grids; default 1.0 leaves physical (metre) coordinates.
+    double coordScale_ = 1.0;
+
     using Clock = std::chrono::steady_clock;
     Clock::time_point t_start_;
 };

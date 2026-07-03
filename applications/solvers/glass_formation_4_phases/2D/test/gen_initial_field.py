@@ -35,7 +35,12 @@ DY     = 6.0e-10   # [m]
 X0     = 0.0
 Y0     = 0.0
 
-# ── 晶核参数 ────────────────────────────────────────────────────────────────
+# ── 初始相设置 ──────────────────────────────────────────────────────────────
+# False = 全液相 (phi0=1, phi1=phi2=phi3=0, eta=0, c=0.5)
+# True  = 在域中心植入 CuZr (B2) 晶核
+SEED_NUCLEUS = False
+
+# ── 晶核参数（仅 SEED_NUCLEUS=True 时生效）──────────────────────────────────
 R_NUCLEUS   = 15.0e-9   # [m]  CuZr (B2) 晶核半径，超临界（r_c ~ 5 nm）
 W_INTERFACE = 3.0 * DX  # [m]  tanh 界面半宽（≈ δ₀₂ = √(2ε₀₂²/w₀₂) ≈ 1.85 nm ≈ 3 cells）
 
@@ -81,9 +86,12 @@ for k in range(NZ):
             r     = math.sqrt((xv - cx) ** 2 + dy2)
             coord = f"{xv:.12e}  {yv:.12e}  {zv:.12e}"
 
-            # 平滑 tanh 界面（宽度 W_INTERFACE ≈ δ₀₂ ≈ 3 cells）
-            # phi2=1 在晶核内，phi2=0 在液相中，过渡宽度 ~3 格
-            phi2_val = 0.5 * (1.0 - math.tanh(2.0 * (r - R_NUCLEUS) / W_INTERFACE))
+            # SEED_NUCLEUS=True : phi2=1 在晶核内、0 在液相中，tanh 过渡 ~3 格
+            # SEED_NUCLEUS=False: 全液相（phi2=0 处处）
+            if SEED_NUCLEUS:
+                phi2_val = 0.5 * (1.0 - math.tanh(2.0 * (r - R_NUCLEUS) / W_INTERFACE))
+            else:
+                phi2_val = 0.0
             phi0_val = 1.0 - phi2_val
 
             handles["phi0"].write(f"{coord}  {phi0_val:.6f}\n")
@@ -103,10 +111,13 @@ for n in FIELDS:
     size = os.path.getsize(path) / 1024
     print(f"  {path}  ({size:.0f} kB)")
 print()
-print(f"晶核参数:")
-print(f"  相: CuZr B2 (phi2)")
-print(f"  半径: {R_NUCLEUS*1e9:.1f} nm = {R_NUCLEUS/DX:.1f} cells")
-print(f"  中心: ({cx*1e9:.1f}, {cy*1e9:.1f}) nm")
+if SEED_NUCLEUS:
+    print(f"晶核参数:")
+    print(f"  相: CuZr B2 (phi2)")
+    print(f"  半径: {R_NUCLEUS*1e9:.1f} nm = {R_NUCLEUS/DX:.1f} cells")
+    print(f"  中心: ({cx*1e9:.1f}, {cy*1e9:.1f}) nm")
+else:
+    print(f"初始相: 全液相 (phi0=1, phi1=phi2=phi3=0, eta=0, c=0.5)")
 print(f"域参数:")
 print(f"  尺寸: {NX*DX*1e9:.1f} nm × {NY*DY*1e9:.1f} nm")
 print(f"  格点: {NX} × {NY}")

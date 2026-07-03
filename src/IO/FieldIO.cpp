@@ -262,7 +262,8 @@ void writeScalarDat(const ScalarField& f, const std::string& path) {
             }
 }
 
-void writeScalarVts(const ScalarField& f, const std::string& path) {
+void writeScalarVts(const ScalarField& f, const std::string& path,
+                    double coordScale) {
     std::ofstream ofs(path);
     if (!ofs)
         throw std::runtime_error("IO::writeField: cannot open file: " + path);
@@ -288,9 +289,13 @@ void writeScalarVts(const ScalarField& f, const std::string& path) {
     for (int k = 0; k <= nz; ++k)
         for (int j = 0; j <= ny; ++j)
             for (int i = 0; i <= nx; ++i) {
-                double x = mesh.origin[0] + i * mesh.d[0];
-                double y = mesh.origin[1] + j * mesh.d[1];
-                double z = mesh.origin[2] + k * mesh.d[2];
+                // For 2D the 3rd dimension is inactive (d[2] is a unit
+                // placeholder); use dx as a thin proportional slab thickness so
+                // the z extent doesn't dwarf the in-plane geometry in ParaView.
+                const double dz = (mesh.dim >= 3) ? mesh.d[2] : mesh.d[0];
+                double x = (mesh.origin[0] + i * mesh.d[0]) * coordScale;
+                double y = (mesh.origin[1] + j * mesh.d[1]) * coordScale;
+                double z = (mesh.origin[2] + k * dz)        * coordScale;
                 ofs << "          " << x << " " << y << " " << z << "\n";
             }
     ofs << "        </DataArray>\n";
@@ -450,11 +455,12 @@ void writeVectorVts(const VectorField& vf, const std::string& path) {
 
 void writeField(const ScalarField& f,
                 const std::string& path,
-                FieldFormat fmt) {
+                FieldFormat fmt,
+                double coordScale) {
     switch (fmt) {
         case FieldFormat::BINARY: writeScalarBinary(f, path); break;
         case FieldFormat::DAT:    writeScalarDat(f, path);    break;
-        case FieldFormat::VTS:    writeScalarVts(f, path);    break;
+        case FieldFormat::VTS:    writeScalarVts(f, path, coordScale); break;
     }
 }
 

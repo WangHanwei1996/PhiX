@@ -58,14 +58,19 @@
 #include "field/ScalarField.h"
 #include "boundary/BCFactory.h"
 #include "equation/Equation.h"
+#include "equation/EquationSystem.h"  // simultaneous coupled-equation update
+#include "operators/FaceOps.h"   // interp/faceGrad/facePW/divFace (face-flux scheme)
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
+
+#include <curand_kernel.h>   // per-step thermal noise on η (cf. verification0)
 
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // ===========================================================================
 // Physical constant
@@ -85,15 +90,9 @@ static constexpr double eps13_sq = 1.0e-10;
 static constexpr double eps23_sq = 1.0e-10;
 static constexpr double beta     = 2.6e-12;   // |∇η|² gradient penalty [J/m]
 
-// Double-well barrier heights [J/m³]
-static constexpr double w01      = 4.2e8;
-static constexpr double w02      = 4.1e8;
-static constexpr double w03      = 4.7e8;
-static constexpr double w12      = 1.0e8;
-static constexpr double w13      = 1.0e8;
-static constexpr double w23      = 1.0e8;
-static constexpr double w_eta    = 2.5e7;
-static constexpr double w_ex     = 2.0e9;
+// Double-well barrier heights wᵢⱼ / w_η / w_ex [J/m³] are now read from the JSONC
+// config (constants.w01 … constants.w_ex); see main().  Paper (Table II) values are
+// used as fallback defaults when a key is absent.
 
 // Interface pair mobilities [m³/(s·J)]
 static constexpr double L01      = 0.05;
@@ -252,6 +251,92 @@ __host__ __device__ inline double g_prime(double x) {
 }
 
 // ===========================================================================
+// Hard clamp of a field's physical cells to [0,1]  (cf. GFA verification0).
+//
+// Explicit Euler can overshoot the stiff double-well once a phase leaves
+// [0,1]; the wᵢⱼφᵢ²φⱼ² / CALPHAD terms then diverge.  Projecting each phase
+// back into [0,1] after every step keeps the order parameters physical and
+// the integration stable.  2D kernel (z stored index = ghost).
+// ===========================================================================
+__global__ void k_clamp01(double* d_curr,
+                          int nx, int ny, int sx, int sy, int ghost)
+{
+    int ix = blockIdx.x * blockDim.x + threadIdx.x;
+    int iy = blockIdx.y * blockDim.y + threadIdx.y;
+    if (ix >= nx || iy >= ny) return;
+    int idx = (ix + ghost) + sx * ((iy + ghost) + sy * ghost);
+    double v = d_curr[idx];
+    if (v < 0.0) v = 0.0;
+    if (v > 1.0) v = 1.0;
+    d_curr[idx] = v;
+}
+
+// ===========================================================================
+// Gibbs simplex projection of the four phase fractions  (φ₀+φ₁+φ₂+φ₃ = 1).
+//
+// The governing equations use the diagonal-L approximation and do NOT conserve
+// Σφᵢ (see file header NOTE), so a [0,1] clamp alone lets every crystal phase
+// independently saturate to 1.  Projecting each cell back onto the simplex
+// {φᵢ ≥ 0, Σφᵢ = 1} after every step restores phase competition: clip negatives,
+// then renormalise by the sum.  (η is NOT part of this simplex — it keeps its
+// own [0,1] clamp.)
+// ===========================================================================
+__global__ void k_proj_simplex4(double* p0, double* p1, double* p2, double* p3,
+                                int nx, int ny, int sx, int sy, int ghost)
+{
+    int ix = blockIdx.x * blockDim.x + threadIdx.x;
+    int iy = blockIdx.y * blockDim.y + threadIdx.y;
+    if (ix >= nx || iy >= ny) return;
+    int idx = (ix + ghost) + sx * ((iy + ghost) + sy * ghost);
+
+    double a0 = fmax(p0[idx], 0.0), a1 = fmax(p1[idx], 0.0);
+    double a2 = fmax(p2[idx], 0.0), a3 = fmax(p3[idx], 0.0);
+    double s  = a0 + a1 + a2 + a3;
+    if (s > 1e-12) {
+        double inv = 1.0 / s;
+        p0[idx] = a0 * inv; p1[idx] = a1 * inv;
+        p2[idx] = a2 * inv; p3[idx] = a3 * inv;
+    } else {                       // degenerate cell → default to liquid
+        p0[idx] = 1.0; p1[idx] = 0.0; p2[idx] = 0.0; p3[idx] = 0.0;
+    }
+}
+
+// ===========================================================================
+// Per-step thermal noise on η  (cf. GFA verification0).
+//
+// η starts at 0 and its driving term ∝ η²(1−η)² vanishes at η=0, so without a
+// stochastic kick η can never leave the liquid state — no glass nucleation.
+// Each step we add N(mean, std²) to η and clamp back to [0,1].  One curand
+// state per physical cell, seeded once.  Only η is perturbed (the φ simplex is
+// left untouched).
+// ===========================================================================
+__global__ void k_initStates(curandState* states,
+                             unsigned long long seed, int n)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n) return;
+    curand_init(seed, tid, 0, &states[tid]);
+}
+
+__global__ void k_noiseClamp(double* d_curr, curandState* states,
+                             int nx, int ny, int sx, int sy, int ghost,
+                             double noise_mean, double noise_std)
+{
+    int ix = blockIdx.x * blockDim.x + threadIdx.x;
+    int iy = blockIdx.y * blockDim.y + threadIdx.y;
+    if (ix >= nx || iy >= ny) return;
+
+    int tid   = iy * nx + ix;
+    double nz = noise_mean + noise_std * curand_normal_double(&states[tid]);
+
+    int idx = (ix + ghost) + sx * ((iy + ghost) + sy * ghost);
+    double v = d_curr[idx] + nz;
+    if (v < 0.0) v = 0.0;
+    if (v > 1.0) v = 1.0;
+    d_curr[idx] = v;
+}
+
+// ===========================================================================
 // main
 // ===========================================================================
 int main(int argc, char* argv[])
@@ -295,6 +380,32 @@ int main(int argc, char* argv[])
     const double alpha = cfg["constants"]["alpha"];  // scaling parameter α
     const double p_SR  = cfg["constants"]["p_SR"];   // Inden p-parameter (e.g. 0.28 FCC-like)
 
+    // Per-step thermal noise on η (Gaussian; activates glass nucleation)
+    const double noise_mean = cfg["constants"]["noise_mean"];  // per-step noise mean
+    const double noise_std  = cfg["constants"]["noise_std"];   // per-step noise std dev (0 = off)
+    const unsigned long long noise_seed =
+        cfg["constants"].count("noise_seed")
+            ? (unsigned long long)cfg["constants"]["noise_seed"]
+            : 42ULL;
+
+    // Cahn-Hilliard composition mobility (constant).  Paper Eq.2 carries NO |∇c|²
+    // term ⇒ κ_c = 0, so μ = ∂f/∂c has no Laplacian part (kappa_c in the config is
+    // left unused in this minimal liquid-driven form).
+    const double M_c = cfg["constants"]["M_c"];   // [m⁵/(J·s)]
+
+    // Double-well barrier heights — config-overridable (defaults = paper Table II).
+    auto getConst = [&](const char* key, double def) -> double {
+        return cfg["constants"].count(key) ? cfg["constants"][key].get<double>() : def;
+    };
+    const double w01   = getConst("w01",   4.2e8);
+    const double w02   = getConst("w02",   4.1e8);
+    const double w03   = getConst("w03",   4.7e8);
+    const double w12   = getConst("w12",   1.0e8);
+    const double w13   = getConst("w13",   1.0e8);
+    const double w23   = getConst("w23",   1.0e8);
+    const double w_eta = getConst("w_eta", 2.5e7);
+    const double w_ex  = getConst("w_ex",  2.0e9);
+
     // Pre-compute T-dependent scalars
     const double f1_val = G_phi1(T) / Vm_phi1;   // free energy density of φ₁
     const double f2_val = G_phi2(T) / Vm_phi2;
@@ -309,11 +420,13 @@ int main(int argc, char* argv[])
     ScalarField phi2(mesh, "phi2", /*ghost=*/1);
     ScalarField phi3(mesh, "phi3", /*ghost=*/1);
     ScalarField eta (mesh, "eta",  /*ghost=*/1);
-    ScalarField c   (mesh, "c",    /*ghost=*/1);  // fixed at 0.5 — CH not solved yet
+    ScalarField c   (mesh, "c",    /*ghost=*/1);  // Zr mole fraction — now solved by CH
+    ScalarField mu  (mesh, "mu",   /*ghost=*/1);  // chemical potential μ=∂f/∂c (auxiliary)
 
     phi0.fill(0); phi1.fill(0); phi2.fill(0); phi3.fill(0);
     eta .fill(0);
-    c   .fill(0.5);  // fixed composition: Zr mole fraction = 0.5
+    c   .fill(0.5);  // default composition (overwritten by initField below)
+    mu  .fill(0.0);
 
     const std::string start_from = cfg["initialize"]["start_from"];
     const int         start_step = IO::resolveStartStep(start_from);
@@ -323,17 +436,50 @@ int main(int argc, char* argv[])
     IO::initField(phi2, start_step);
     IO::initField(phi3, start_step);
     IO::initField(eta,  start_step);
-    // c is fixed at 0.5 — not loaded from file
+    IO::initField(c,    start_step);   // composition is now a solved field
 
     auto allocUp = [](ScalarField& f){ f.allocDevice(); f.uploadAllToDevice(); };
     allocUp(phi0); allocUp(phi1); allocUp(phi2); allocUp(phi3);
-    allocUp(eta);  allocUp(c);
+    allocUp(eta);  allocUp(c);     allocUp(mu);
 
     // -----------------------------------------------------------------------
     // 5. Boundary conditions
     // -----------------------------------------------------------------------
-    auto  bcSet = buildBCs(cfg["boundary_conditions"]);
+    auto  bcSet = buildBCs(mesh, cfg["boundary_conditions"]);
     auto& bcs   = bcSet.ptrs;
+
+    // -----------------------------------------------------------------------
+    // 5b. [φ₀ TEMPLATE] Staggered face fields for the gradient-energy flux.
+    //
+    //  For each phase m, on both axes a, we need:
+    //    pA[m] = interp(φₘ, a)     (φₘ averaged onto a-faces)
+    //    gA[m] = faceGrad(φₘ, a)   (∂_a φₘ on a-faces)
+    //  G{x,y}0 accumulate the total φ₀ divergence flux; t1/t2 are per-pair
+    //  scratch.  These mirror the staggered scheme in dendrite_growth.cu.
+    // -----------------------------------------------------------------------
+    std::vector<ScalarField*> phis = { &phi0, &phi1, &phi2, &phi3 };
+
+    auto makeFaceVec = [&](int ax, const std::string& tag) {
+        std::vector<FaceField> v; v.reserve(4);
+        for (int m = 0; m < 4; ++m)
+            v.emplace_back(mesh, ax, tag + std::to_string(m));
+        return v;
+    };
+    std::vector<FaceField> pX = makeFaceVec(0, "pX"), gX = makeFaceVec(0, "gX");
+    std::vector<FaceField> pY = makeFaceVec(1, "pY"), gY = makeFaceVec(1, "gY");
+    std::vector<FaceField> Gx = makeFaceVec(0, "Gx"), Gy = makeFaceVec(1, "Gy"); // per-eq flux
+    FaceField t1x(mesh, 0, "t1x"), t2x(mesh, 0, "t2x");   // x-face scratch
+    FaceField t1y(mesh, 1, "t1y"), t2y(mesh, 1, "t2y");   // y-face scratch
+
+    auto allocUpFace = [](FaceField& f){ f.fill(0.0); f.allocDevice(); f.uploadToDevice(); };
+    for (auto& f : pX) allocUpFace(f);
+    for (auto& f : gX) allocUpFace(f);
+    for (auto& f : pY) allocUpFace(f);
+    for (auto& f : gY) allocUpFace(f);
+    for (auto& f : Gx) allocUpFace(f);
+    for (auto& f : Gy) allocUpFace(f);
+    allocUpFace(t1x); allocUpFace(t2x);
+    allocUpFace(t1y); allocUpFace(t2y);
 
     // -----------------------------------------------------------------------
     // 6. Helpers: variational derivatives δF/δφⱼ = ∂f/∂φⱼ − ∇·(∂f/∂(∇φⱼ))
@@ -361,69 +507,113 @@ int main(int argc, char* argv[])
     //    +Lij·εₛₖ²·[−2φₛ|∇φₖ|² + 2φₖ(∇φₛ·∇φₖ) + φₖ²∇²φₛ − φₛφₖ∇²φₖ]
     // -----------------------------------------------------------------------
 
-    // Gradient-energy part of −Lij·δF/δφⱼ for one (φⱼ, φₖ) pair.
-    // Returns Lij·εⱼₖ²·[−2φⱼ|∇φₖ|²+2φₖ(∇φⱼ·∇φₖ)+φₖ²∇²φⱼ−φⱼφₖ∇²φₖ]
-    auto gradE = [&](const ScalarField& phi_j, const ScalarField& phi_k,
-                     double eps_jk_sq, double Lij) -> RHSExpr
+    // -----------------------------------------------------------------------
+    // Face-flux reformulation of the gradient energy (all phases φ₀–φ₃).
+    //
+    //  For a pair (j,k) the full variational derivative splits *exactly* as
+    //    δe/δφⱼ = ε²(∇φₖ)·A + ε²∇·(φₖ A),   A = φⱼ∇φₖ − φₖ∇φⱼ
+    //  so the contribution −Lij·δe/δφⱼ to ∂φᵢ/∂t becomes
+    //    (non-div, cell-centred):  −Lij ε² φⱼ|∇φₖ|² + Lij ε² φₖ(∇φₖ·∇φⱼ)
+    //    (divergence, face flux):  +Lij ε² ∇·(φₖ²∇φⱼ − φₖφⱼ∇φₖ)
+    //  Summing the two reproduces gradE() above term-for-term in the continuum,
+    //  but the *diffusive* divergence is now a consistent staggered face flux
+    //  (compact 5-point coupling, no odd/even checkerboard), while only the
+    //  irreducible rotational source — a genuine ∇·∇ dot product that is not a
+    //  divergence — remains on cell centres.  The face part is assembled by
+    //  addPairFlux() below; here is just the cell-centred residual.
+    // -----------------------------------------------------------------------
+    auto gradE_nd = [&](const ScalarField& phi_j, const ScalarField& phi_k,
+                        double eps_jk_sq, double Lij) -> RHSExpr
     {
         return
-            - mul(phi_j, grad_dot(phi_k, phi_k), 2.0 * Lij * eps_jk_sq)
-            + mul(phi_k, grad_dot(phi_j, phi_k), 2.0 * Lij * eps_jk_sq)
-            + mul(phi_k * phi_k, lap(phi_j),     Lij * eps_jk_sq)
-            - mul(phi_j * phi_k, lap(phi_k),     Lij * eps_jk_sq);
+            - mul(phi_j, grad_dot(phi_k, phi_k), Lij * eps_jk_sq)   // −Lij ε² φⱼ|∇φₖ|²
+            + mul(phi_k, grad_dot(phi_k, phi_j), Lij * eps_jk_sq);  // +Lij ε² φₖ(∇φₖ·∇φⱼ)
     };
 
-    // −Lij · δF/δφ₀  (G11 + G15, i=0)
-    auto dF_phi0 = [&](double Lij) -> RHSExpr {
+    // Bulk (potential + double-well) parts of −Lij·δF/δφⱼ for j=1,2,3,
+    // i.e. dF_phiⱼ with the gradient-energy gradE() terms removed.
+    auto bulk_phi1 = [&](double Lij) -> RHSExpr {
+        return
+            pw(phi1, PHIX_FN(double) { return -Lij * f1_val; })
+            - mul(phi1,
+                  w01*(phi0*phi0) + w12*(phi2*phi2) + w13*(phi3*phi3),
+                  2.0 * Lij)
+            - mul(eta*eta, phi1, 2.0 * Lij * w_ex);
+    };
+    auto bulk_phi2 = [&](double Lij) -> RHSExpr {
+        return
+            pw(phi2, PHIX_FN(double) { return -Lij * f2_val; })
+            - mul(phi2,
+                  w02*(phi0*phi0) + w12*(phi1*phi1) + w23*(phi3*phi3),
+                  2.0 * Lij)
+            - mul(eta*eta, phi2, 2.0 * Lij * w_ex);
+    };
+    auto bulk_phi3 = [&](double Lij) -> RHSExpr {
+        return
+            pw(phi3, PHIX_FN(double) { return -Lij * f3_val; })
+            - mul(phi3,
+                  w03*(phi0*phi0) + w13*(phi1*phi1) + w23*(phi2*phi2),
+                  2.0 * Lij)
+            - mul(eta*eta, phi3, 2.0 * Lij * w_ex);
+    };
+
+    // Bulk part of −Lij·δF/δφ₀  (φ₀ has the CALPHAD liquid + h(η)Δf^SR drive,
+    // and no amorphous w_ex coupling).
+    auto bulk_phi0 = [&](double Lij) -> RHSExpr {
         return
             pw(c, eta, PHIX_FN (double cv, double ev) {
                 return -Lij * (compute_Gliq(cv, T) / Vm_liq + h_func(ev) * dFSR);
             })
             - mul(phi0,
                   w01*(phi1*phi1) + w02*(phi2*phi2) + w03*(phi3*phi3),
-                  2.0 * Lij)
-            + gradE(phi0, phi1, eps01_sq, Lij)
-            + gradE(phi0, phi2, eps02_sq, Lij)
-            + gradE(phi0, phi3, eps03_sq, Lij);
+                  2.0 * Lij);
     };
 
-    // −Lij · δF/δφ₁  (G12 + G15, s=1)
-    auto dF_phi1 = [&](double Lij) -> RHSExpr {
-        return
-            pw(phi1, PHIX_FN(double) { return -Lij * f1_val; })
-            - mul(phi1,
-                  w01*(phi0*phi0) + w12*(phi2*phi2) + w13*(phi3*phi3),
-                  2.0 * Lij)
-            - mul(eta*eta, phi1, 2.0 * Lij * w_ex)
-            + gradE(phi1, phi0, eps01_sq, Lij)
-            + gradE(phi1, phi2, eps12_sq, Lij)
-            + gradE(phi1, phi3, eps13_sq, Lij);
+    // Dispatch the four bulk helpers by phase index.
+    auto bulk = [&](int j, double Lij) -> RHSExpr {
+        switch (j) {
+            case 0:  return bulk_phi0(Lij);
+            case 1:  return bulk_phi1(Lij);
+            case 2:  return bulk_phi2(Lij);
+            default: return bulk_phi3(Lij);
+        }
     };
 
-    // −Lij · δF/δφ₂  (G12 + G15, s=2)
-    auto dF_phi2 = [&](double Lij) -> RHSExpr {
-        return
-            pw(phi2, PHIX_FN(double) { return -Lij * f2_val; })
-            - mul(phi2,
-                  w02*(phi0*phi0) + w12*(phi1*phi1) + w23*(phi3*phi3),
-                  2.0 * Lij)
-            - mul(eta*eta, phi2, 2.0 * Lij * w_ex)
-            + gradE(phi2, phi0, eps02_sq, Lij)
-            + gradE(phi2, phi1, eps12_sq, Lij)
-            + gradE(phi2, phi3, eps23_sq, Lij);
+    // Mobility matrix as the weighted graph LAPLACIAN  L = D − A  of the pair
+    // mobilities (NOT the bare adjacency A).  This makes  ∂φᵢ/∂t = −Σⱼ Lᵢⱼ δF/δφⱼ
+    // the Steinbach pairwise form  −Σⱼ≠ᵢ Mᵢⱼ(δF/δφᵢ − δF/δφⱼ):
+    //   • L is positive-semidefinite ⇒ dF/dt = −gᵀLg ≤ 0  (dissipative, stable)
+    //   • row sums are 0 ⇒ Σᵢ ∂φᵢ/∂t = 0  (Σφᵢ conserved)
+    // The bare adjacency form (Lᵢᵢ=0, Lᵢⱼ>0) is indefinite ⇒ energy can grow ⇒
+    // divergence, and gives no self-relaxation (Lᵢᵢ=0) ⇒ phases saturate.
+    const double Lmat[4][4] = {
+        {  L01+L02+L03, -L01,        -L02,        -L03        },
+        { -L01,          L01+L12+L13,-L12,        -L13        },
+        { -L02,         -L12,         L02+L12+L23,-L23        },
+        { -L03,         -L13,        -L23,         L03+L13+L23 },
+    };
+    const double eps2[4][4] = {
+        { 0.0,      eps01_sq, eps02_sq, eps03_sq },
+        { eps01_sq, 0.0,      eps12_sq, eps13_sq },
+        { eps02_sq, eps12_sq, 0.0,      eps23_sq },
+        { eps03_sq, eps13_sq, eps23_sq, 0.0      },
     };
 
-    // −Lij · δF/δφ₃  (G12 + G15, s=3)
-    auto dF_phi3 = [&](double Lij) -> RHSExpr {
-        return
-            pw(phi3, PHIX_FN(double) { return -Lij * f3_val; })
-            - mul(phi3,
-                  w03*(phi0*phi0) + w13*(phi1*phi1) + w23*(phi2*phi2),
-                  2.0 * Lij)
-            - mul(eta*eta, phi3, 2.0 * Lij * w_ex)
-            + gradE(phi3, phi0, eps03_sq, Lij)
-            + gradE(phi3, phi1, eps13_sq, Lij)
-            + gradE(phi3, phi2, eps23_sq, Lij);
+    // Cell-centred RHS of ∂φᵢ/∂t = −Σⱼ Lᵢⱼ δF/δφⱼ  (Laplacian Lmat ⇒ Steinbach):
+    //   for every j (INCLUDING the j=i self-term), add −Lmat[i][j]·δF/δφⱼ
+    //   = bulk(δF/δφⱼ) + non-divergence gradient-energy residual for every (j,k).
+    // The divergence (face-flux) part is added separately as divFace(Gx[i],Gy[i]).
+    auto buildCellRHS = [&](int i) -> RHSExpr {
+        RHSExpr e;
+        for (int j = 0; j < 4; ++j) {
+            const double Lij = Lmat[i][j];
+            e += bulk(j, Lij);
+            for (int k = 0; k < 4; ++k) {
+                if (k == j) continue;
+                e += gradE_nd(*phis[j], *phis[k], eps2[j][k], Lij);
+            }
+        }
+        return e;
     };
 
     // -----------------------------------------------------------------------
@@ -437,29 +627,16 @@ int main(int argc, char* argv[])
     // i=3 L03   L13   L23    0
     // -----------------------------------------------------------------------
 
-    // --- 7a. ∂φ₀/∂t = −L₀₁ δF/δφ₁ − L₀₂ δF/δφ₂ − L₀₃ δF/δφ₃  [G7, i=0] -
+    // --- 7a–7d.  ∂φᵢ/∂t = −Σⱼ≠ᵢ Lᵢⱼ δF/δφⱼ   [G7, i=0..3] ----------------
+    //   Each RHS = cell-centred (bulk + non-divergence gradient residual)
+    //            + divFace(Gx[i], Gy[i])  for the gradient-energy divergence.
     Equation eqPhi0(phi0, "AC_phi0");
-    eqPhi0.setRHS(
-        dF_phi1(L01) + dF_phi2(L02) + dF_phi3(L03)
-    );
-
-    // --- 7b. ∂φ₁/∂t = −L₀₁ δF/δφ₀ − L₁₂ δF/δφ₂ − L₁₃ δF/δφ₃  [G7, i=1] -
     Equation eqPhi1(phi1, "AC_phi1");
-    eqPhi1.setRHS(
-        dF_phi0(L01) + dF_phi2(L12) + dF_phi3(L13)
-    );
-
-    // --- 7c. ∂φ₂/∂t = −L₀₂ δF/δφ₀ − L₁₂ δF/δφ₁ − L₂₃ δF/δφ₃  [G7, i=2] -
     Equation eqPhi2(phi2, "AC_phi2");
-    eqPhi2.setRHS(
-        dF_phi0(L02) + dF_phi1(L12) + dF_phi3(L23)
-    );
-
-    // --- 7d. ∂φ₃/∂t = −L₀₃ δF/δφ₀ − L₁₃ δF/δφ₁ − L₂₃ δF/δφ₂  [G7, i=3] -
     Equation eqPhi3(phi3, "AC_phi3");
-    eqPhi3.setRHS(
-        dF_phi0(L03) + dF_phi1(L13) + dF_phi2(L23)
-    );
+    Equation* eqPhi[4] = { &eqPhi0, &eqPhi1, &eqPhi2, &eqPhi3 };
+    for (int i = 0; i < 4; ++i)
+        eqPhi[i]->setRHS( buildCellRHS(i) + divFace(Gx[i], Gy[i]) );
 
     // --- 7e. TRANSIENT: η  (Allen-Cahn, amorphous order parameter)  [G8] ---
     //   ∂f/∂η = 30φ₀η²(1−η)²Δf^SR + 2w_η η(1−η)(1−2η) + 2w_ex η Σᵢ₌₁³ φᵢ²
@@ -479,11 +656,89 @@ int main(int argc, char* argv[])
         + L_eta * beta * lap(eta)
     );
 
+    // --- 7g. CH: composition c  (liquid-driven minimal form)  [G9 / paper Eq.5] ----
+    //   Crystals are stoichiometric ⇒ ∂fᵢ/∂c = 0, so the ONLY composition force is the
+    //   liquid's:   μ = ∂f/∂c = φ₀ ∂f₀/∂c = φ₀ · dG_liq/dc / Vm_liq.
+    //   Paper Eq.2 has no |∇c|² term ⇒ κ_c = 0, so μ has no Laplacian part.
+    //   Two-equation idiom: μ is an auxiliary field recomputed each step (computeRHS),
+    //   then c is advanced by  ∂c/∂t = ∇·(M_c∇μ) = M_c∇²μ  (constant M_c).
+    //   NOTE μ→0 inside crystals (φ₀→0) ⇒ composition is simply frozen there (no
+    //   partitioning at off-stoichiometry crystals).  Acceptable for Cu₅₀Zr₅₀ where the
+    //   growing B2-CuZr sits at c=0.5 = alloy composition.
+    Equation eqMu(mu, "CH_mu");
+    eqMu.setRHS(
+        pw(c, phi0, PHIX_FN (double cv, double p0) {
+            return p0 * compute_dGliq_dc(cv, T) / Vm_liq;     // [J/m³]
+        })
+    );
+    Equation eqC(c, "CH_c");
+    eqC.setRHS( M_c * lap(mu) );
+
     // -----------------------------------------------------------------------
-    // 8. Time-step counter (track via φ₀ equation)
+    // 7f. Per-step assembly of every equation's gradient-energy face flux.
+    //
+    //  addPairFlux accumulates  +Lij ε² ∇·(φₖ²∇φⱼ − φₖφⱼ∇φₖ)  for one (j,k)
+    //  pair into (accX, accY).  On a-faces the flux component is
+    //    Lij ε² [ (φₖ_f)² (∂_aφⱼ)_f − (φₖ_f)(φⱼ_f)(∂_aφₖ)_f ]
+    //  using face-interpolated φ for the coefficients and face gradients for
+    //  the derivatives — a standard conservative finite-volume flux.
     // -----------------------------------------------------------------------
-    eqPhi0.step = start_step;
-    eqPhi0.time = start_step * dt;
+    auto addPairFlux = [&](FaceField& accX, FaceField& accY,
+                           int j, int k, double eps_jk_sq, double Lij) {
+        const double w = Lij * eps_jk_sq;
+        // x-faces:  t1 = (φₖ_f)²(∂ₓφⱼ)_f ,  t2 = (φₖ_f)(φⱼ_f)(∂ₓφₖ)_f
+        facePWGPU(t1x, pX[k], gX[j],
+                  PHIX_FN (double pk, double gj) { return pk * pk * gj; });
+        facePWGPU(t2x, pX[k], pX[j], gX[k],
+                  PHIX_FN (double pk, double pj, double gk) { return pk * pj * gk; });
+        facePWGPU(accX, accX, t1x, t2x,
+                  PHIX_FN (double g, double a, double b) { return g + w * (a - b); });
+        // y-faces
+        facePWGPU(t1y, pY[k], gY[j],
+                  PHIX_FN (double pk, double gj) { return pk * pk * gj; });
+        facePWGPU(t2y, pY[k], pY[j], gY[k],
+                  PHIX_FN (double pk, double pj, double gk) { return pk * pj * gk; });
+        facePWGPU(accY, accY, t1y, t2y,
+                  PHIX_FN (double g, double a, double b) { return g + w * (a - b); });
+    };
+
+    auto assembleAllFlux = [&]() {
+        // 1. refresh φ ghosts so faceGrad sees valid boundary values
+        for (auto* bc : bcs)
+            for (auto* p : phis) bc->applyOnGPU(*p);
+        // 2. interp + faceGrad of every phase onto both axes' faces (shared)
+        for (int m = 0; m < 4; ++m) {
+            interpGPU  (*phis[m], 0, pX[m]);  faceGradGPU(*phis[m], 0, gX[m]);
+            interpGPU  (*phis[m], 1, pY[m]);  faceGradGPU(*phis[m], 1, gY[m]);
+        }
+        // 3. per equation i: zero its accumulators, then sum its (j,k) pairs
+        for (int i = 0; i < 4; ++i) {
+            facePWGPU(Gx[i], Gx[i], PHIX_FN (double) { return 0.0; });
+            facePWGPU(Gy[i], Gy[i], PHIX_FN (double) { return 0.0; });
+            for (int j = 0; j < 4; ++j) {   // include j=i (self-term) — Laplacian L
+                const double Lij = Lmat[i][j];
+                for (int k = 0; k < 4; ++k) {
+                    if (k == j) continue;
+                    addPairFlux(Gx[i], Gy[i], j, k, eps2[j][k], Lij);
+                }
+            }
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // 8. Coupled system — SIMULTANEOUS update (all RHS from the same time
+    //    level n before any field changes; the correct scheme for fully
+    //    coupled multi-phase Allen-Cahn).  η joins as a cell-centred equation.
+    // -----------------------------------------------------------------------
+    EquationSystem sys(dt, TimeScheme::EULER);
+    sys.add(eqPhi0, bcs);
+    sys.add(eqPhi1, bcs);
+    sys.add(eqPhi2, bcs);
+    sys.add(eqPhi3, bcs);
+    sys.add(eqEta,  bcs);
+    sys.add(eqC,    bcs);   // composition joins the simultaneous update (μ stays auxiliary)
+    sys.step = start_step;
+    sys.time = start_step * dt;
 
     // -----------------------------------------------------------------------
     // 9. Output & time loop
@@ -496,6 +751,7 @@ int main(int argc, char* argv[])
         writer.writeFields(phi2, 0, 0.0);
         writer.writeFields(phi3, 0, 0.0);
         writer.writeFields(eta,  0, 0.0);
+        writer.writeFields(c,    0, 0.0);
         std::cout << "Starting GFA-4ph simulation ("
                   << nSteps << " steps, dt=" << dt
                   << ", T=" << T << " K, c=0.5 fixed)\n";
@@ -508,27 +764,64 @@ int main(int argc, char* argv[])
 
     writer.resetTimer();
 
+    // [0,1] projection launch config (cf. GFA verification0): all phases share
+    // the same mesh / ghost / storedDims, so one set of params clamps them all.
+    const dim3 clampBlk(16, 16);
+    const dim3 clampGrd((nx + 15) / 16, (ny + 15) / 16);
+    const int  cg  = phi0.ghost;
+    const int  csx = phi0.storedDims[0];
+    const int  csy = phi0.storedDims[1];
+
+    // curand states for the per-step η noise (one per physical cell, seeded once)
+    const int    nPhys   = nx * ny;
+    curandState* d_states = nullptr;
+    cudaMalloc(&d_states, static_cast<std::size_t>(nPhys) * sizeof(curandState));
+    k_initStates<<<(nPhys + 255) / 256, 256>>>(d_states, noise_seed, nPhys);
+    cudaDeviceSynchronize();
+
     for (int s = start_step; s < nSteps; ++s) {
-        // Operator-split time advance (explicit Euler):
-        //   c is fixed at 0.5 — CH equation not solved
-        eqPhi0.advanceTransient (bcs, dt, &phi0);
-        eqPhi1.advanceTransient (bcs, dt, &phi1);
-        eqPhi2.advanceTransient (bcs, dt, &phi2);
-        eqPhi3.advanceTransient (bcs, dt, &phi3);
-        eqEta .advanceTransient (bcs, dt, &eta);
+        //   c is fixed at 0.5 — CH equation not solved.
+        // Assemble all gradient-energy face fluxes from the time-n φ (this also
+        // refreshes every φ ghost, which the cell-centred residuals need), then
+        // advance the whole coupled system simultaneously (explicit Euler).
+        assembleAllFlux();
+        // CH: build μ^n = φ₀ ∂f₀/∂c from the time-n (c, φ₀), then refresh μ ghosts so
+        // the M_c∇²μ stencil in eqC sees valid boundaries (canonical PhiX CH idiom).
+        for (auto* bc : bcs) bc->applyOnGPU(c);
+        eqMu.computeRHS(mu);
+        for (auto* bc : bcs) bc->applyOnGPU(mu);
+        sys.advance();
 
-        if (writer.shouldPrint(eqPhi0.step))
-            writer.printProgress(eqPhi0.step, eqPhi0.time);
+        // Constrain the order parameters so the stiff double-well / CALPHAD
+        // terms stay bounded (explicit Euler overshoots otherwise):
+        //   φ₀..φ₃ → Gibbs simplex (φᵢ≥0, Σφᵢ=1)  — restores phase competition
+        //   η      → plain [0,1] clamp            — independent order parameter
+        k_proj_simplex4<<<clampGrd, clampBlk>>>(
+            phi0.d_curr, phi1.d_curr, phi2.d_curr, phi3.d_curr,
+            nx, ny, csx, csy, cg);
+        k_clamp01<<<clampGrd, clampBlk>>>(eta.d_curr, nx, ny, csx, csy, cg);
 
-        if (writer.shouldWrite(eqPhi0.step)) {
-            writer.writeFields(phi0, eqPhi0.step, eqPhi0.time);
-            writer.writeFields(phi1, eqPhi0.step, eqPhi0.time);
-            writer.writeFields(phi2, eqPhi0.step, eqPhi0.time);
-            writer.writeFields(phi3, eqPhi0.step, eqPhi0.time);
-            writer.writeFields(eta,  eqPhi0.step, eqPhi0.time);
+        if (writer.shouldPrint(sys.step))
+            writer.printProgress(sys.step, sys.time);
+
+        if (writer.shouldWrite(sys.step)) {
+            writer.writeFields(phi0, sys.step, sys.time);
+            writer.writeFields(phi1, sys.step, sys.time);
+            writer.writeFields(phi2, sys.step, sys.time);
+            writer.writeFields(phi3, sys.step, sys.time);
+            writer.writeFields(eta,  sys.step, sys.time);
+            writer.writeFields(c,    sys.step, sys.time);
         }
+
+        // Thermal kick on η for the next step (Gaussian + clamp).  Only η is
+        // perturbed; activates glass nucleation (no-op when noise_std == 0).
+        if (noise_std != 0.0)
+            k_noiseClamp<<<clampGrd, clampBlk>>>(
+                eta.d_curr, d_states, nx, ny, csx, csy, cg,
+                noise_mean, noise_std);
     }
 
+    cudaFree(d_states);
     std::cout << "Done.\n";
     return 0;
 }

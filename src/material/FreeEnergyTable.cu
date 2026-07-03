@@ -171,6 +171,15 @@ FreeEnergyTable parseStream(std::ifstream& ifs, const std::string& path, char de
             " values, got " + std::to_string(data.size()) +
             " in '" + path + "'");
 
+    // Degenerate c axis (nc == 1): a stoichiometric phase whose f depends on
+    // T only.  The bilinear view needs nc >= 2, so duplicate the single row
+    // and widen the c range to [0,1] — interpolation between two identical
+    // rows returns the c-independent value exactly, for any queried c.
+    if (nc == 1) {
+        data.insert(data.end(), data.begin(), data.end());
+        nc = 2;  c_min = 0.0;  c_max = 1.0;
+    }
+
     return FreeEnergyTable(c_min, c_max, nc, T_min, T_max, nT, std::move(data));
 }
 

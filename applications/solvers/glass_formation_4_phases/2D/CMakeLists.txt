@@ -1,4 +1,6 @@
-add_executable(GFA_4ph "GFA_4ph.cu")
+# [makePhi generated]
+
+add_executable(GFA_4ph GFA_4ph.cu)
 
 target_link_libraries(GFA_4ph PRIVATE phix)
 

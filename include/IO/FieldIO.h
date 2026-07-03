@@ -18,9 +18,12 @@ namespace IO {
 // ---------------------------------------------------------------------------
 
 /// Write a ScalarField to disk in the specified format.
+/// coordScale multiplies the VTS node coordinates only (e.g. 1e9 → nm) so
+/// nm-scale grids are visible in ParaView; DAT/BINARY are unaffected.
 void writeField(const ScalarField& f,
                 const std::string& path,
-                FieldFormat fmt = FieldFormat::BINARY);
+                FieldFormat fmt = FieldFormat::BINARY,
+                double coordScale = 1.0);
 
 /// Read a ScalarField from a binary .field file.
 /// Physical cells are loaded into `curr`; `prev` is left zeroed.

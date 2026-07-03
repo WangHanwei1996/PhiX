@@ -1,0 +1,19 @@
+{
+    "mesh": { "nx": 256, "ny": 256, "dx": 6.0e-10, "dy": 6.0e-10, "x0": 0.0, "y0": 0.0 },
+    "initialize": { "start_from": "initial_field", "dt": 2.5e-11, "nSteps": 600 },
+    "constants": {
+        "T": 1100.0,
+        "Vm_liq": 1.058e-5, "Vm_phi1": 9.77e-6, "Vm_phi2": 1.039e-5, "Vm_phi3": 1.164e-5,
+        "T_g": 700.0, "alpha": 1.0, "p_SR": 0.28,
+        "M_c": 1.0e-19, "kappa_c": 1.0e-10,
+
+
+        "w01": 4.2e8, "w02": 4.1e8, "w03": 4.7e8,
+        "w12": 1.0e8, "w13": 1.0e8, "w23": 1.0e8,
+        "w_eta": 2.5e7, "w_ex": 2.0e9,
+
+        "noise_mean": 0.0, "noise_std": 1.0e-3, "noise_seed": 42
+    },
+    "boundary_conditions": { "x_min":"Periodic","x_max":"Periodic","y_min":"Periodic","y_max":"Periodic" },
+    "output": { "print_interval": 100, "write_interval": 50, "format": "VTK", "coord_scale": 1.0 }
+}

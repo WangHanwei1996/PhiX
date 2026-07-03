@@ -58,6 +58,9 @@
     },
 
     "constants": {
+        // 温度 [K] — 求解器读静态 constants.T（冷却调度尚未实现，T_start/T_end/cooling_rate 暂不生效）
+        "T" : 1100.0,
+
         // 摩尔体积 [m³/mol-atom]，来自 Wang & Napolitano (2012) 参数
         "Vm_liq" : 1.058e-5,   // 液相（非晶）
         "Vm_phi1": 9.77e-6,    // Cu₁₀Zr₇
@@ -80,7 +83,7 @@
         // 热噪声参数（η 的 Gaussian 扰动，激活自发玻璃转变）
         //   noise_std = 0 禁用噪声（等温晶化测试无需噪声）
         "noise_mean": 0.0,
-        "noise_std" : 0.0,    // [无量纲] 0=无噪声；冷却模拟建议 1e-3
+        "noise_std" : 1.0e-3, // [无量纲] 0=无噪声；1e-3 激活 η 形核（晶化/玻璃竞争）
         "noise_seed": 42
     },
 
@@ -95,6 +98,7 @@
     "output": {
         "print_interval": 1,     // 诊断
         "write_interval": 1,     // 诊断：每步写出
-        "format"        : "ALL"    // BINARY + DAT + VTK 三种格式
+        "format"        : "ALL",   // BINARY + DAT + VTK 三种格式
+        "coord_scale"   : 1.0      // VTS 坐标缩放(1.0=真实米; ParaView 显示靠 2D z 厚度按 dx 比例修复)
     }
 }

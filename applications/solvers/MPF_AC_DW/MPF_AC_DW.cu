@@ -6,20 +6,22 @@
  *
  *  Three-phase system: phi0, phi_a, phi_b   (sum constraint: phi0+phi_a+phi_b=1)
  *
- *  Free energy (obstacle potential + grad1 gradient energy):
- *    f_grad = Σ_{i<j} κ_ij ∇φ_i · ∇φ_j
- *    f_dw   = Σ_{i<j} Ω_ij φ_i φ_j
+ *  Free energy (pairwise double-well + grad2 weighted-gradient energy):
+ *    f_grad = Σ_{i<j} (ε²_ij/2) |φ_i ∇φ_j − φ_j ∇φ_i|²
+ *    f_dw   = Σ_{i<j} W_ij φ_i² φ_j²
  *
- *  Functional derivative:
- *    δF/δφ_i = Σ_{j≠i} (κ_ij ∇²φ_j + Ω_ij φ_j)
+ *  Chemical potential (functional derivative μ_i = δF/δφ_i):
+ *    μ_i = 2φ_i Σ_{j≠i} W_ij φ_j²
+ *        + Σ_{j≠i} ε²_ij [ 2φ_i|∇φ_j|² − 2φ_j(∇φ_i·∇φ_j)
+ *                          + φ_i φ_j ∇²φ_j − φ_j² ∇²φ_i ]
  *
- *  Pairwise Allen-Cahn (N=3 projection):
- *    Δφ_i = 2·δF/δφ_i − Σ_{j≠i} δF/δφ_j
- *    φ_i^{n+1} = φ_i^n − dt·M₀·Δφ_i
+ *  Pairwise Allen-Cahn (conserves Σφ_i automatically):
+ *    ∂φ_i/∂t = − Σ_{j≠i} L_ij (μ_i − μ_j)
+ *    φ_i^{n+1} = φ_i^n + dt · ∂φ_i/∂t      (explicit Euler)
  *
- *  Parameter relations:
- *    κ_ij = ℓ·γ_ij          (ℓ = diffuse interface width)
- *    Ω_ij = K·γ_ij / ℓ     (K = 16/π²  for obstacle potential)
+ *  Parameter relations (ℓ = diffuse interface width):
+ *    ε²_ij = (3/2)·γ_ij·ℓ
+ *    W_ij  = 12·γ_ij / ℓ
  *
  *  Boundary conditions (static triple junction benchmark, matching MATLAB ref):
  *    Top  wall (y=H): Neumann (zero normal gradient)
@@ -242,8 +244,8 @@ int main(int argc, char* argv[])
     //    Left/Right: non-uniform Dirichlet via k_apply_xbc
     //      upper ny_top rows → phi0=1; lower rows → phi_a=1 (left) / phi_b=1 (right)
     // -----------------------------------------------------------------------
-    NoFluxBC bcTop(Axis::Y, Side::HIGH);
-    NoFluxBC bcBot(Axis::Y, Side::LOW);
+    NoFluxBC bcTop(mesh.facePatch(Axis::Y, Side::HIGH));
+    NoFluxBC bcBot(mesh.facePatch(Axis::Y, Side::LOW));
 
     // -----------------------------------------------------------------------
     // 6b. Equations expressed in DSL

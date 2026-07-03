@@ -1,0 +1,43 @@
+
+
+
+$$
+f(c, T, \phi)
+= f_L(c,T)\,[1 - h(\phi)]
++ f_S(c,T)\,h(\phi)
++ w_\phi\,g(\phi)
++\frac{\varepsilon^2}{2}|\nabla \phi|^2
+$$
+
+$f_L(c,T)$, $ f_S(c,T)$ 暂时给成当前c的二次式的形式，暂时和T无关，后面我自有安排。
+$$
+h(\phi)
+= \phi^3 \left(6\phi^2 - 15\phi + 10\right)
+$$
+
+$$
+g(\phi)
+= \phi^2 (1 - \phi)^2 
+$$
+
+
+$$
+\mu = \frac{\partial f_L(c,T)}{\partial c}\,[1 - h(\phi)]
++\frac{\partial f_S(c,T)}{\partial c} \,h(\phi)
+$$
+
+
+$$
+\frac{\partial c}{\partial t}
+= M_c \nabla^2\mu
+$$
+
+$$
+\frac{\partial \phi}{\partial t}
+= -M_{\phi} \left(
+(f_S-f_L) h'(\phi)
++w_\phi g'(\phi)
+-\varepsilon^2 \nabla^2 \phi
+\right)
+$$
+
