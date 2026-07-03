@@ -23,6 +23,8 @@
 
 #include "mesh/Mesh.h"
 #include "field/ScalarField.h"
+#include "field/Reduce.h"
+#include "field/ReducePW.h"
 #include "boundary/BCFactory.h"
 #include "equation/Equation.h"
 #include "equation/FusedTerm.h"
@@ -30,10 +32,12 @@
 #include "IO/ConfigFile.h"
 #include "IO/FieldIO.h"
 #include "IO/OutputWriter.h"
+#include "IO/PFHubWriter.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 
 int main(int argc, char* argv[])
@@ -118,6 +122,29 @@ int main(int argc, char* argv[])
     // === 7. Output & time loop ===============================================
     IO::OutputWriter writer(cfg["output"]);
 
+    // Optional PFHub-style free-energy CSV (cfg["pfhub"] section):
+    //   F(t) = Σ [ ρ(c−ca)²(cb−c)² + κ/2 |∇c|² ] dV   (+ total solute)
+    std::unique_ptr<IO::PFHubWriter> pfhub;
+    int pfhubEvery = 0;
+    const double dV = dx * dy;
+    auto freeEnergy = [&]() {
+        for (auto* bc : bcs) bc->applyOnGPU(c);   // fresh ghosts for ∇c
+        const double fChem = reduce::fieldSumPW(c, PHIX_FN (Real v) {
+            const Real da = v - Real(ca), db = Real(cb) - v;
+            return Real(rho) * da * da * db * db;
+        });
+        return (fChem + 0.5 * kappa * reduce::fieldGradSq(c)) * dV;
+    };
+    if (cfg.has("pfhub")) {
+        pfhubEvery = cfg["pfhub"]["energy_interval"];
+        const std::string csvPath = cfg["pfhub"]["csv"];
+        pfhub = std::make_unique<IO::PFHubWriter>(
+            csvPath,
+            std::vector<std::string>{"time", "free_energy", "total_c"});
+        if (start_step == 0)
+            pfhub->addRow({0.0, freeEnergy(), reduce::fieldSum(c) * dV});
+    }
+
     if (start_step == 0) {
         writer.writeFields(c, 0, solver.time);
         std::cout << "Starting Cahn-Hilliard simulation ("
@@ -136,6 +163,9 @@ int main(int argc, char* argv[])
             writer.printProgress(s.step, s.time);
         if (writer.shouldWrite(s.step))
             writer.writeFields(c, s.step, s.time);
+        if (pfhub && s.step % pfhubEvery == 0)
+            pfhub->addRow({s.time, freeEnergy(),
+                           reduce::fieldSum(c) * dV});
     });
 
     std::cout << "Done.\n";
