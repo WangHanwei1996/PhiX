@@ -102,6 +102,7 @@ add_library(phix STATIC
     src/equation/VectorEquation.cu
     src/solver/Solver.cu
     src/solver/LinearSolver.cu
+    src/solver/SemiImplicitSolver.cu
     src/solver/VectorSolver.cu
     src/IO/ConfigFile.cpp
     src/IO/FieldIO.cpp

@@ -2,3 +2,8 @@ add_executable(module_linsolve test_linsolve.cu)
 target_link_libraries(module_linsolve PRIVATE phix)
 set_target_properties(module_linsolve PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_linsolve COMMAND module_linsolve)
+
+add_executable(module_semiimplicit test_semiimplicit.cu)
+target_link_libraries(module_semiimplicit PRIVATE phix)
+set_target_properties(module_semiimplicit PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_semiimplicit COMMAND module_semiimplicit)
