@@ -33,6 +33,10 @@ double fieldL2    (const ScalarField& f);   // sqrt(fieldSumSq)
 // True if any physical cell holds NaN or ±Inf.  Ghost cells are ignored.
 bool fieldHasNonFinite(const ScalarField& f);
 
+// Inner product Σ a·b over physical cells (double accumulation).
+// Both fields must share the same layout.
+double fieldDot(const ScalarField& a, const ScalarField& b);
+
 // Release the internally cached device scratch buffers.
 void freeScratch();
 

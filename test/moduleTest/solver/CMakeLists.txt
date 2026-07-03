@@ -1,0 +1,4 @@
+add_executable(module_linsolve test_linsolve.cu)
+target_link_libraries(module_linsolve PRIVATE phix)
+set_target_properties(module_linsolve PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_linsolve COMMAND module_linsolve)

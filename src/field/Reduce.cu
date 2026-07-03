@@ -64,6 +64,18 @@ struct GatherNonFinite : GatherBase {
         return isfinite(fetch(p)) ? 0 : 1;
     }
 };
+struct GatherDot : GatherBase {
+    const Real* data2;
+    __host__ __device__ double operator()(int p) const {
+        const int i = p % nx;
+        const int j = (p / nx) % ny;
+        const int k = p / (nx * ny);
+        const std::size_t c = (i + g)
+            + static_cast<std::size_t>(sx) * ((j + g)
+            + static_cast<std::size_t>(sy) * (k + g));
+        return static_cast<double>(data[c]) * static_cast<double>(data2[c]);
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Cached device scratch: CUB temp storage (grow-only) + one 8-byte result
@@ -178,6 +190,34 @@ double fieldL2(const ScalarField& f) {
 bool fieldHasNonFinite(const ScalarField& f) {
     return runReduce<int, GatherNonFinite>(f, "reduce::fieldHasNonFinite",
                                            CubMax{}) != 0;
+}
+
+double fieldDot(const ScalarField& a, const ScalarField& b) {
+    if (a.storedSize != b.storedSize || a.ghost != b.ghost)
+        throw std::invalid_argument(
+            "reduce::fieldDot: fields '" + a.name + "' and '" + b.name
+            + "' have different layouts");
+    if (!b.d_curr)
+        throw std::runtime_error("reduce::fieldDot: field '" + b.name
+                                 + "' has no device allocation");
+    const GatherDot base = makeGather<GatherDot>(a, "reduce::fieldDot");
+    GatherDot gather = base;
+    gather.data2 = b.d_curr;
+
+    const int n = a.mesh.n[0] * a.mesh.n[1] * a.mesh.n[2];
+    auto it = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0), gather);
+
+    std::size_t bytes = 0;
+    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it,
+                                      static_cast<double*>(g_scratch.d_out), n));
+    ensureScratch(bytes);
+    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it,
+                                      static_cast<double*>(g_scratch.d_out), n));
+    double h = 0.0;
+    CUDA_CHECK(cudaMemcpy(&h, g_scratch.d_out, sizeof(double),
+                          cudaMemcpyDeviceToHost));
+    return h;
 }
 
 void freeScratch() {
