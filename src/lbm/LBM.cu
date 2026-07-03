@@ -101,6 +101,7 @@ __global__ void kernel_lbm_collide(Real* f, int nx, int ny,
 // takes the opposite direction from the cell itself (halfway BB).
 // ---------------------------------------------------------------------------
 __global__ void kernel_lbm_stream(Real* fnew, const Real* f,
+                                  const unsigned char* solid,
                                   int nx, int ny,
                                   int wxlo, int wxhi, int wylo, int wyhi)
 {
@@ -110,6 +111,13 @@ __global__ void kernel_lbm_stream(Real* fnew, const Real* f,
     const int x = idx % nx;
     const int y = idx / nx;
 
+    if (solid && solid[idx]) {              // solid cells stay frozen
+        for (int i = 0; i < 9; ++i) fnew[i * n + idx] = f[i * n + idx];
+        return;
+    }
+
+    // Non-periodic sides (walls/inlet/outflow) stream as bounce-back here;
+    // inlet/outflow layers are overwritten by their BC kernels afterwards.
     for (int i = 0; i < 9; ++i) {
         int sx = x - CX[i];
         int sy = y - CY[i];
@@ -119,15 +127,127 @@ __global__ void kernel_lbm_stream(Real* fnew, const Real* f,
         if (sy < 0)        { if (wylo) bb = true; else sy += ny; }
         else if (sy >= ny) { if (wyhi) bb = true; else sy -= ny; }
 
+        if (!bb && solid && solid[sx + nx * sy]) bb = true;   // obstacle BB
+
         fnew[i * n + idx] = bb ? f[OPP[i] * n + idx]
                                : f[i * n + (sx + nx * sy)];
     }
 }
 
 // ---------------------------------------------------------------------------
+// Zou-He velocity inlet on one straight side (2D, all four sides).
+// prof: (uNormal, uTangential) pairs per boundary cell; uNormal > 0 = into
+// the domain on either side.
+// ---------------------------------------------------------------------------
+__global__ void kernel_lbm_inlet(Real* f, const Real* prof,
+                                 int nx, int ny, int axis, int side)
+{
+    const int nT = (axis == 0) ? ny : nx;
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= nT) return;
+    const int n = nx * ny;
+
+    const int x = (axis == 0) ? (side == 0 ? 0 : nx - 1) : t;
+    const int y = (axis == 0) ? t : (side == 0 ? 0 : ny - 1);
+    const int c = x + nx * y;
+
+    const Real uN = prof[2 * t];        // into the domain
+    const Real uT = prof[2 * t + 1];
+
+    Real F[9];
+    for (int i = 0; i < 9; ++i) F[i] = f[i * n + c];
+
+    if (axis == 0 && side == 0) {           // x-low: ux=+uN, uy=uT
+        const Real rho = (F[0]+F[2]+F[4] + Real(2)*(F[3]+F[6]+F[7]))
+                       / (Real(1) - uN);
+        F[1] = F[3] + Real(2.0/3.0)*rho*uN;
+        F[5] = F[7] - Real(0.5)*(F[2]-F[4]) + Real(1.0/6.0)*rho*uN
+             + Real(0.5)*rho*uT;
+        F[8] = F[6] + Real(0.5)*(F[2]-F[4]) + Real(1.0/6.0)*rho*uN
+             - Real(0.5)*rho*uT;
+    } else if (axis == 0 && side == 1) {    // x-high: ux=−uN, uy=uT
+        const Real rho = (F[0]+F[2]+F[4] + Real(2)*(F[1]+F[5]+F[8]))
+                       / (Real(1) - uN);
+        F[3] = F[1] - Real(2.0/3.0)*rho*uN;
+        F[7] = F[5] + Real(0.5)*(F[2]-F[4]) - Real(1.0/6.0)*rho*uN
+             - Real(0.5)*rho*uT;
+        F[6] = F[8] - Real(0.5)*(F[2]-F[4]) - Real(1.0/6.0)*rho*uN
+             + Real(0.5)*rho*uT;
+    } else if (axis == 1 && side == 0) {    // y-low: uy=+uN, ux=uT
+        const Real rho = (F[0]+F[1]+F[3] + Real(2)*(F[4]+F[7]+F[8]))
+                       / (Real(1) - uN);
+        F[2] = F[4] + Real(2.0/3.0)*rho*uN;
+        F[5] = F[7] - Real(0.5)*(F[1]-F[3]) + Real(1.0/6.0)*rho*uN
+             + Real(0.5)*rho*uT;
+        F[6] = F[8] + Real(0.5)*(F[1]-F[3]) + Real(1.0/6.0)*rho*uN
+             - Real(0.5)*rho*uT;
+    } else {                                // y-high: uy=−uN, ux=uT
+        const Real rho = (F[0]+F[1]+F[3] + Real(2)*(F[2]+F[5]+F[6]))
+                       / (Real(1) - uN);
+        F[4] = F[2] - Real(2.0/3.0)*rho*uN;
+        F[7] = F[5] - Real(0.5)*(F[1]-F[3]) - Real(1.0/6.0)*rho*uN
+             - Real(0.5)*rho*uT;
+        F[8] = F[6] + Real(0.5)*(F[1]-F[3]) - Real(1.0/6.0)*rho*uN
+             + Real(0.5)*rho*uT;
+    }
+    // knowns are written back unchanged, unknowns carry the Zou-He values
+    for (int i = 0; i < 9; ++i) f[i * n + c] = F[i];
+}
+
+// ---------------------------------------------------------------------------
+// Zou-He pressure outlet: density anchored at rho0, normal velocity floats,
+// tangential velocity taken as zero.  (A pure zero-gradient copy does not
+// fix the pressure level — paired with a velocity inlet the total mass
+// integrates without bound.)
+// ---------------------------------------------------------------------------
+__global__ void kernel_lbm_outflow(Real* f, int nx, int ny,
+                                   int axis, int side, Real rho0)
+{
+    const int nT = (axis == 0) ? ny : nx;
+    const int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= nT) return;
+    const int n = nx * ny;
+
+    const int x = (axis == 0) ? (side == 0 ? 0 : nx - 1) : t;
+    const int y = (axis == 0) ? t : (side == 0 ? 0 : ny - 1);
+    const int c = x + nx * y;
+
+    Real F[9];
+    for (int i = 0; i < 9; ++i) F[i] = f[i * n + c];
+
+    if (axis == 0 && side == 1) {           // x-high outlet
+        const Real ux = Real(-1)
+            + (F[0]+F[2]+F[4] + Real(2)*(F[1]+F[5]+F[8])) / rho0;
+        F[3] = F[1] - Real(2.0/3.0)*rho0*ux;
+        F[7] = F[5] + Real(0.5)*(F[2]-F[4]) - Real(1.0/6.0)*rho0*ux;
+        F[6] = F[8] - Real(0.5)*(F[2]-F[4]) - Real(1.0/6.0)*rho0*ux;
+    } else if (axis == 0 && side == 0) {    // x-low outlet
+        const Real ux = Real(1)
+            - (F[0]+F[2]+F[4] + Real(2)*(F[3]+F[6]+F[7])) / rho0;
+        F[1] = F[3] + Real(2.0/3.0)*rho0*ux;
+        F[5] = F[7] - Real(0.5)*(F[2]-F[4]) + Real(1.0/6.0)*rho0*ux;
+        F[8] = F[6] + Real(0.5)*(F[2]-F[4]) + Real(1.0/6.0)*rho0*ux;
+    } else if (axis == 1 && side == 1) {    // y-high outlet
+        const Real uy = Real(-1)
+            + (F[0]+F[1]+F[3] + Real(2)*(F[2]+F[5]+F[6])) / rho0;
+        F[4] = F[2] - Real(2.0/3.0)*rho0*uy;
+        F[7] = F[5] - Real(0.5)*(F[1]-F[3]) - Real(1.0/6.0)*rho0*uy;
+        F[8] = F[6] + Real(0.5)*(F[1]-F[3]) - Real(1.0/6.0)*rho0*uy;
+    } else {                                // y-low outlet
+        const Real uy = Real(1)
+            - (F[0]+F[1]+F[3] + Real(2)*(F[4]+F[7]+F[8])) / rho0;
+        F[2] = F[4] + Real(2.0/3.0)*rho0*uy;
+        F[5] = F[7] - Real(0.5)*(F[1]-F[3]) + Real(1.0/6.0)*rho0*uy;
+        F[6] = F[8] + Real(0.5)*(F[1]-F[3]) + Real(1.0/6.0)*rho0*uy;
+    }
+    for (int i = 0; i < 9; ++i) f[i * n + c] = F[i];
+}
+
+// ---------------------------------------------------------------------------
 // Macroscopic export into ghost-padded ScalarFields (physical cells)
 // ---------------------------------------------------------------------------
-__global__ void kernel_lbm_macro(const Real* f, int nx, int ny,
+__global__ void kernel_lbm_macro(const Real* f, const unsigned char* solid,
+                                 int nx, int ny,
                                  Real fx, Real fy,
                                  Real* rho_out, Real* ux_out, Real* uy_out,
                                  int sx, int sy, int g)
@@ -138,6 +258,13 @@ __global__ void kernel_lbm_macro(const Real* f, int nx, int ny,
     const int x = idx % nx;
     const int y = idx / nx;
     const int c = (x + g) + sx * ((y + g) + sy * g);
+
+    if (solid && solid[idx]) {
+        if (rho_out) rho_out[c] = Real(1);
+        if (ux_out)  ux_out[c]  = Real(0);
+        if (uy_out)  uy_out[c]  = Real(0);
+        return;
+    }
 
     Real rho = Real(0), mx = Real(0), my = Real(0);
     for (int i = 0; i < 9; ++i) {
@@ -178,12 +305,89 @@ LBM2D::LBM2D(const Mesh& mesh, const LBMParams& p)
 LBM2D::~LBM2D() {
     if (d_f_)    cudaFree(d_f_);      // best-effort; no throw in dtor
     if (d_ftmp_) cudaFree(d_ftmp_);
+    if (d_mask_) cudaFree(d_mask_);
+    for (auto& row : d_inlet_)
+        for (auto* p : row)
+            if (p) cudaFree(p);
 }
 
 void LBM2D::setWall(Axis axis, Side side) {
     if (axis == Axis::Z)
         throw std::invalid_argument("LBM2D::setWall: 2D lattice has no Z");
-    walls_[static_cast<int>(axis)][side == Side::LOW ? 0 : 1] = 1;
+    sideType_[static_cast<int>(axis)][side == Side::LOW ? 0 : 1] = 1;
+}
+
+void LBM2D::setVelocityInlet(Axis axis, Side side,
+                             const std::vector<double>& uNormal,
+                             const std::vector<double>& uTangential) {
+    if (axis == Axis::Z)
+        throw std::invalid_argument("LBM2D::setVelocityInlet: no Z in 2D");
+    const int a = static_cast<int>(axis);
+    const int sIdx = (side == Side::LOW) ? 0 : 1;
+    const int nT = (a == 0) ? ny_ : nx_;
+    if (static_cast<int>(uNormal.size()) != nT)
+        throw std::invalid_argument(
+            "LBM2D::setVelocityInlet: profile length "
+            + std::to_string(uNormal.size()) + " != tangential extent "
+            + std::to_string(nT));
+    if (!uTangential.empty()
+        && static_cast<int>(uTangential.size()) != nT)
+        throw std::invalid_argument(
+            "LBM2D::setVelocityInlet: uTangential length mismatch");
+
+    std::vector<Real> prof(2 * static_cast<std::size_t>(nT));
+    for (int t = 0; t < nT; ++t) {
+        prof[2 * t]     = static_cast<Real>(uNormal[static_cast<std::size_t>(t)]);
+        prof[2 * t + 1] = uTangential.empty()
+            ? Real(0)
+            : static_cast<Real>(uTangential[static_cast<std::size_t>(t)]);
+    }
+    if (!d_inlet_[a][sIdx])
+        CUDA_CHECK(cudaMalloc(&d_inlet_[a][sIdx], 2 * nT * sizeof(Real)));
+    CUDA_CHECK(cudaMemcpy(d_inlet_[a][sIdx], prof.data(),
+                          2 * nT * sizeof(Real), cudaMemcpyHostToDevice));
+    sideType_[a][sIdx] = 2;
+}
+
+void LBM2D::setOutflow(Axis axis, Side side, double rho0) {
+    if (axis == Axis::Z)
+        throw std::invalid_argument("LBM2D::setOutflow: no Z in 2D");
+    const int a = static_cast<int>(axis);
+    const int sIdx = (side == Side::LOW) ? 0 : 1;
+    sideType_[a][sIdx] = 3;
+    outletRho_[a][sIdx] = rho0;
+}
+
+void LBM2D::setObstacleMask(const ScalarField& mask) {
+    if (mask.mesh.n[0] != nx_ || mask.mesh.n[1] != ny_)
+        throw std::invalid_argument(
+            "LBM2D::setObstacleMask: mask mesh differs from lattice");
+    const int n = nx_ * ny_;
+    std::vector<unsigned char> h(static_cast<std::size_t>(n));
+    const int g = mask.ghost, sx = mask.storedDims[0], sy = mask.storedDims[1];
+    for (int y = 0; y < ny_; ++y)
+    for (int x = 0; x < nx_; ++x)
+        h[static_cast<std::size_t>(x + nx_ * y)] =
+            (mask.curr[static_cast<std::size_t>(
+                 (x + g) + sx * ((y + g) + sy * g))] >= Real(0.5)) ? 1 : 0;
+    if (!d_mask_)
+        CUDA_CHECK(cudaMalloc(&d_mask_, n));
+    CUDA_CHECK(cudaMemcpy(d_mask_, h.data(), n, cudaMemcpyHostToDevice));
+}
+
+void LBM2D::applyBoundaryKernels_() {
+    for (int a = 0; a < 2; ++a)
+        for (int sIdx = 0; sIdx < 2; ++sIdx) {
+            const int nT = (a == 0) ? ny_ : nx_;
+            if (sideType_[a][sIdx] == 2)
+                kernel_lbm_inlet<<<(nT + 255) / 256, 256>>>(
+                    d_f_, d_inlet_[a][sIdx], nx_, ny_, a, sIdx);
+            else if (sideType_[a][sIdx] == 3)
+                kernel_lbm_outflow<<<(nT + 255) / 256, 256>>>(
+                    d_f_, nx_, ny_, a, sIdx,
+                    static_cast<Real>(outletRho_[a][sIdx]));
+        }
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void LBM2D::initialize(double rho0, double ux0, double uy0) {
@@ -201,10 +405,12 @@ void LBM2D::step() {
         d_f_, nx_, ny_, static_cast<Real>(1.0 / tau_), fx_, fy_);
     CUDA_CHECK(cudaGetLastError());
     kernel_lbm_stream<<<(n + 255) / 256, 256>>>(
-        d_ftmp_, d_f_, nx_, ny_,
-        walls_[0][0], walls_[0][1], walls_[1][0], walls_[1][1]);
+        d_ftmp_, d_f_, d_mask_, nx_, ny_,
+        sideType_[0][0] != 0, sideType_[0][1] != 0,
+        sideType_[1][0] != 0, sideType_[1][1] != 0);
     CUDA_CHECK(cudaGetLastError());
     Real* t = d_f_; d_f_ = d_ftmp_; d_ftmp_ = t;   // buffer swap, no copy
+    applyBoundaryKernels_();
     ++step_;
 }
 
@@ -228,7 +434,7 @@ void LBM2D::macroscopics(ScalarField* rho, ScalarField* ux, ScalarField* uy) {
     }
     const int n = nx_ * ny_;
     kernel_lbm_macro<<<(n + 255) / 256, 256>>>(
-        d_f_, nx_, ny_, fx_, fy_,
+        d_f_, d_mask_, nx_, ny_, fx_, fy_,
         rho ? rho->d_curr : nullptr,
         ux  ? ux->d_curr  : nullptr,
         uy  ? uy->d_curr  : nullptr,

@@ -165,5 +165,120 @@ int main() {
         require(threw, "tau <= 0.5 did not throw");
     }
 
+    // =======================================================================
+    // 4. Velocity inlet + outflow: Poiseuille without body force
+    // =======================================================================
+    {
+        const int nx = 96, ny = 32;
+        const double tau = 0.8, uMax = 0.02;
+        Mesh mesh = Mesh::makeUniform2D(CoordSys::CARTESIAN,
+                                        nx, 1.0, 0.0, ny, 1.0, 0.0);
+        LBMParams p;
+        p.tau = tau;
+        LBM2D lbm(mesh, p);
+        lbm.setWall(Axis::Y, Side::LOW);
+        lbm.setWall(Axis::Y, Side::HIGH);
+        std::vector<double> prof(ny);
+        for (int j = 0; j < ny; ++j) {
+            const double h = j + 0.5;
+            prof[static_cast<std::size_t>(j)] =
+                4.0 * uMax * h * (ny - h) / (double(ny) * ny);
+        }
+        lbm.setVelocityInlet(Axis::X, Side::LOW, prof);
+        lbm.setOutflow(Axis::X, Side::HIGH);
+        lbm.initialize(1.0);
+        lbm.run(20000);
+
+        ScalarField ux(mesh, "ux", 1), rho(mesh, "rho", 1);
+        ux.allocDevice(); rho.allocDevice();
+        lbm.macroscopics(&rho, &ux, nullptr);
+        ux.downloadCurrFromDevice();
+        rho.downloadCurrFromDevice();
+
+        // downstream (3/4 length) profile vs the inlet parabola; the
+        // conserved quantity along the channel is the MASS flux Σρu
+        // (Σu varies with the driving pressure gradient).
+        double dev = 0.0, fluxIn = 0.0, fluxMid = 0.0;
+        const int xm = 3 * nx / 4;
+        auto at = [&](ScalarField& f, int i, int j) {
+            return static_cast<double>(
+                f.curr[static_cast<std::size_t>(f.index(i, j))]);
+        };
+        for (int j = 0; j < ny; ++j) {
+            const double um = at(ux, xm, j);
+            dev = std::max(dev, std::fabs(
+                um - prof[static_cast<std::size_t>(j)]) / uMax);
+            fluxIn  += at(rho, 1, j) * at(ux, 1, j);
+            fluxMid += at(rho, xm, j) * um;
+        }
+        std::printf("  inlet/outflow poiseuille: max profile dev %.2e,"
+                    " mass-flux drift %.2e\n", dev,
+                    std::fabs(fluxMid - fluxIn) / fluxIn);
+        require(dev < 0.02, "downstream profile deviates: "
+                            + std::to_string(dev));
+        require(std::fabs(fluxMid - fluxIn) / fluxIn < 1e-3,
+                "mass flux not conserved along the channel");
+    }
+
+    // =======================================================================
+    // 5. Interior obstacle: solid cells pinned, symmetric blockage flow
+    // =======================================================================
+    {
+        const int nx = 96, ny = 48;
+        Mesh mesh = Mesh::makeUniform2D(CoordSys::CARTESIAN,
+                                        nx, 1.0, 0.0, ny, 1.0, 0.0);
+        LBMParams p;
+        p.tau = 0.8;
+        LBM2D lbm(mesh, p);
+        lbm.setWall(Axis::Y, Side::LOW);
+        lbm.setWall(Axis::Y, Side::HIGH);
+        std::vector<double> prof(ny);
+        for (int j = 0; j < ny; ++j) {
+            const double h = j + 0.5;
+            prof[static_cast<std::size_t>(j)] =
+                4.0 * 0.02 * h * (ny - h) / (double(ny) * ny);
+        }
+        lbm.setVelocityInlet(Axis::X, Side::LOW, prof);
+        lbm.setOutflow(Axis::X, Side::HIGH);
+
+        // centred square block 8×8
+        ScalarField mask(mesh, "mask", 1);
+        mask.initialize([&](double x, double y, double) {
+            return (std::fabs(x - nx / 2.0) < 4.0
+                    && std::fabs(y - ny / 2.0) < 4.0) ? 1.0 : 0.0;
+        });
+        lbm.setObstacleMask(mask);
+        lbm.initialize(1.0);
+        lbm.run(20000);
+
+        ScalarField ux(mesh, "ux", 1), uy(mesh, "uy", 1);
+        ux.allocDevice(); uy.allocDevice();
+        lbm.macroscopics(nullptr, &ux, &uy);
+        ux.downloadCurrFromDevice();
+        uy.downloadCurrFromDevice();
+
+        require(!reduce::fieldHasNonFinite(ux), "obstacle run produced NaN");
+
+        // solid cells report zero velocity
+        require(ux.curr[static_cast<std::size_t>(
+                    ux.index(nx / 2, ny / 2))] == 0.0,
+                "solid cell reports nonzero velocity");
+
+        // blockage accelerates the bypass; symmetric geometry → mirror flow
+        const double uSide = ux.curr[static_cast<std::size_t>(
+            ux.index(nx / 2, ny / 4))];
+        require(uSide > 0.02, "no bypass acceleration beside the block");
+        double asym = 0.0;
+        for (int i = 0; i < nx; ++i) {
+            const double a = ux.curr[static_cast<std::size_t>(
+                ux.index(i, ny / 4))];
+            const double b = ux.curr[static_cast<std::size_t>(
+                ux.index(i, ny - 1 - ny / 4))];
+            asym = std::max(asym, std::fabs(a - b));
+        }
+        require(asym < 1e-10, "flow not symmetric about the channel axis: "
+                              + std::to_string(asym));
+    }
+
     return 0;
 }

@@ -37,6 +37,8 @@
 #include "field/ScalarField.h"
 #include "mesh/Mesh.h"
 
+#include <vector>
+
 namespace PhiX {
 
 struct LBMParams {
@@ -59,6 +61,25 @@ public:
     // side before the first step.  Unmarked sides stream periodically.
     void setWall(Axis axis, Side side);
 
+    // Zou-He velocity inlet on one side: prescribed (u_normal, u_tangential)
+    // per boundary cell (profiles of length = tangential extent; uTan may be
+    // empty = 0).  u_normal > 0 means INTO the domain on either side.
+    void setVelocityInlet(Axis axis, Side side,
+                          const std::vector<double>& uNormal,
+                          const std::vector<double>& uTangential = {});
+
+    // Pressure outlet (Zou-He) on one side: fixes the density level rho0
+    // and lets the normal velocity float.  NOTE: a pure zero-gradient
+    // outflow does NOT anchor the pressure — combined with a velocity
+    // inlet the density integrates without bound; this outlet is the
+    // stable pairing for channel flows.
+    void setOutflow(Axis axis, Side side, double rho0 = 1.0);
+
+    // Interior no-slip obstacles: cells with mask >= 0.5 are solid (halfway
+    // bounce-back at their faces); solid cells report u = 0, rho = 1 in
+    // macroscopics().  The mask field must share the constructor mesh.
+    void setObstacleMask(const ScalarField& mask);
+
     // Equilibrium initialisation at uniform (rho0, u0).
     void initialize(double rho0, double ux0 = 0.0, double uy0 = 0.0);
 
@@ -80,11 +101,19 @@ private:
     int         nx_, ny_;
     int         step_ = 0;
 
-    // walls_[axis][side] — 0 periodic, 1 bounce-back (kernel arguments)
-    int walls_[2][2] = {{0, 0}, {0, 0}};
+    // sideType_[axis][side]: 0 periodic, 1 wall (BB), 2 velocity inlet,
+    // 3 zero-gradient outflow
+    int sideType_[2][2] = {{0, 0}, {0, 0}};
 
     Real* d_f_    = nullptr;   // 9 × nx·ny distributions (SoA)
     Real* d_ftmp_ = nullptr;
+
+    unsigned char* d_mask_ = nullptr;         // 1 = solid, nullptr = none
+    Real* d_inlet_[2][2] = {{nullptr, nullptr}, {nullptr, nullptr}};
+                                              // (uN, uT) pairs per boundary cell
+    double outletRho_[2][2] = {{1.0, 1.0}, {1.0, 1.0}};
+
+    void applyBoundaryKernels_();             // inlet/outflow after streaming
 };
 
 } // namespace PhiX
