@@ -51,6 +51,7 @@ add_library(phix STATIC
     src/field/FaceField.cu
     src/field/GibbsSimplex.cu
     src/field/NoiseGenerator.cu
+    src/field/Reduce.cu
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
     src/operators/FaceOps.cu
