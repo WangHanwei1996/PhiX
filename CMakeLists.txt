@@ -106,6 +106,7 @@ add_library(phix STATIC
     src/IO/FieldIO.cpp
     src/IO/OutputWriter.cpp
     src/material/FreeEnergyTable.cu
+    src/material/KKS.cu
     src/material/BinaryAlloy.cu
 )
 

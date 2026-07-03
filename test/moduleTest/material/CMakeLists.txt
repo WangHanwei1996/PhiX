@@ -2,3 +2,8 @@ add_executable(module_material_perf test_free_energy_perf.cu)
 target_link_libraries(module_material_perf PRIVATE phix)
 set_target_properties(module_material_perf PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_material_perf COMMAND module_material_perf)
+
+add_executable(module_kks test_kks.cu)
+target_link_libraries(module_kks PRIVATE phix)
+set_target_properties(module_kks PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_kks COMMAND module_kks)
