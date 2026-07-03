@@ -1,0 +1,4 @@
+add_executable(bench_stencil bench_stencil.cu)
+target_link_libraries(bench_stencil PRIVATE phix)
+set_target_properties(bench_stencil PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME bench_stencil COMMAND bench_stencil)

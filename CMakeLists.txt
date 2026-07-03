@@ -4,6 +4,29 @@ project(PhiX LANGUAGES CXX CUDA)
 enable_testing()
 
 # ---------------------------------------------------------------------------
+# Build type — default to Release (an empty CMAKE_BUILD_TYPE compiles the
+# host side with no optimisation at all)
+# ---------------------------------------------------------------------------
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    message(STATUS "PhiX: CMAKE_BUILD_TYPE not set — defaulting to Release")
+endif()
+
+# ---------------------------------------------------------------------------
+# Profiling helpers
+#   PHIX_LINEINFO=ON     nvcc -lineinfo (source-correlated kernel profiling)
+#   PHIX_ENABLE_NVTX=ON  compile PHIX_NVTX_RANGE() into real NVTX ranges
+# ---------------------------------------------------------------------------
+option(PHIX_LINEINFO    "Add -lineinfo to CUDA compiles (profiling)" OFF)
+option(PHIX_ENABLE_NVTX "Enable NVTX ranges (perf/Perf.h)"           OFF)
+if(PHIX_LINEINFO)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+endif()
+if(PHIX_ENABLE_NVTX)
+    add_compile_definitions(PHIX_ENABLE_NVTX)
+endif()
+
+# ---------------------------------------------------------------------------
 # C++ / CUDA standards
 # ---------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD  17)
@@ -90,6 +113,11 @@ add_subdirectory(test/moduleTest)
 # Convergence-order verification (MMS-style refinement studies)
 # ---------------------------------------------------------------------------
 add_subdirectory(test/convergence)
+
+# ---------------------------------------------------------------------------
+# Performance benchmarks
+# ---------------------------------------------------------------------------
+add_subdirectory(test/benchmark)
 
 # ---------------------------------------------------------------------------
 # Tutorials
