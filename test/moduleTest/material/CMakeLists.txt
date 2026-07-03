@@ -7,3 +7,8 @@ add_executable(module_kks test_kks.cu)
 target_link_libraries(module_kks PRIVATE phix)
 set_target_properties(module_kks PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_kks COMMAND module_kks)
+
+add_executable(module_kks_at test_kks_antitrapping.cu)
+target_link_libraries(module_kks_at PRIVATE phix)
+set_target_properties(module_kks_at PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_kks_at COMMAND module_kks_at)

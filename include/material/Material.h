@@ -16,3 +16,4 @@
 #include "material/FreeEnergyTable.h"
 #include "material/BinaryAlloy.h"
 #include "material/KKS.h"
+#include "material/KKSAntiTrapping.h"
