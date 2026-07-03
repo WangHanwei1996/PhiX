@@ -87,3 +87,4 @@ applications/solvers/GFA_binary/test/log_*
 
 # Video outputs
 *.mp4
+build-float/
