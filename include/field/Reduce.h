@@ -45,8 +45,20 @@ double fieldDot(const ScalarField& a, const ScalarField& b);
 void fieldDotAsync(const ScalarField& a, const ScalarField& b, double* d_out,
                    cudaStream_t stream = nullptr);
 
+// Σ over physical cells of |∇f|² (CD2 central differences — f's ghosts
+// must be refreshed).  Multiply by κ/2·dV for the gradient energy term of
+// a free-energy functional.  Double accumulation.
+double fieldGradSq(const ScalarField& f);
+
 // Release the internally cached device scratch buffers.
 void freeScratch();
+
+// Internal accessors for the header-only pointwise reductions
+// (field/ReducePW.h) — cached device scratch shared with this module.
+namespace detail {
+void*   scratchTemp(std::size_t bytes);   // grow-only CUB temp storage
+double* scratchOut();                     // 8-byte device result slot
+}
 
 } // namespace reduce
 } // namespace PhiX

@@ -234,6 +234,77 @@ void fieldDotAsync(const ScalarField& a, const ScalarField& b,
     enqueueDot(a, b, d_out, "reduce::fieldDotAsync", stream);
 }
 
+// ---------------------------------------------------------------------------
+// |∇f|² sum (CD2) — fused gather, no scratch field
+// ---------------------------------------------------------------------------
+namespace {
+struct GatherGradSq : GatherBase {
+    int  sz;      // z stride (sx*sy)
+    int  dim;
+    Real i2dx, i2dy, i2dz;   // 0.5/d
+    __host__ __device__ double operator()(int p) const {
+        const int i = p % nx;
+        const int j = (p / nx) % ny;
+        const int k = p / (nx * ny);
+        const std::size_t c = (i + g)
+            + static_cast<std::size_t>(sx) * ((j + g)
+            + static_cast<std::size_t>(sy) * (k + g));
+        double gx = static_cast<double>((data[c + 1] - data[c - 1]) * i2dx);
+        double s2 = gx * gx;
+        if (dim >= 2) {
+            const double gy = static_cast<double>(
+                (data[c + sx] - data[c - sx]) * i2dy);
+            s2 += gy * gy;
+        }
+        if (dim >= 3) {
+            const double gz = static_cast<double>(
+                (data[c + sz] - data[c - sz]) * i2dz);
+            s2 += gz * gz;
+        }
+        return s2;
+    }
+};
+} // namespace
+
+double fieldGradSq(const ScalarField& f) {
+    if (f.ghost < 1)
+        throw std::invalid_argument("reduce::fieldGradSq: ghost >= 1 required");
+    GatherGradSq gather = makeGather<GatherGradSq>(f, "reduce::fieldGradSq");
+    gather.sz   = f.storedDims[0] * f.storedDims[1];
+    gather.dim  = f.mesh.dim;
+    gather.i2dx = static_cast<Real>(0.5 / f.mesh.d[0]);
+    gather.i2dy = (f.mesh.dim >= 2)
+        ? static_cast<Real>(0.5 / f.mesh.d[1]) : Real(0);
+    gather.i2dz = (f.mesh.dim >= 3)
+        ? static_cast<Real>(0.5 / f.mesh.d[2]) : Real(0);
+
+    const int n = f.mesh.n[0] * f.mesh.n[1] * f.mesh.n[2];
+    auto it = thrust::make_transform_iterator(
+        thrust::make_counting_iterator(0), gather);
+    std::size_t bytes = 0;
+    ensureScratch(0);
+    CUDA_CHECK(cub::DeviceReduce::Sum(nullptr, bytes, it,
+                                      static_cast<double*>(g_scratch.d_out), n));
+    ensureScratch(bytes);
+    CUDA_CHECK(cub::DeviceReduce::Sum(g_scratch.d_temp, bytes, it,
+                                      static_cast<double*>(g_scratch.d_out), n));
+    double h = 0.0;
+    CUDA_CHECK(cudaMemcpy(&h, g_scratch.d_out, sizeof(double),
+                          cudaMemcpyDeviceToHost));
+    return h;
+}
+
+namespace detail {
+void* scratchTemp(std::size_t bytes) {
+    ensureScratch(bytes);
+    return g_scratch.d_temp;
+}
+double* scratchOut() {
+    ensureScratch(0);
+    return static_cast<double*>(g_scratch.d_out);
+}
+} // namespace detail
+
 void freeScratch() {
     if (g_scratch.d_temp) CUDA_CHECK(cudaFree(g_scratch.d_temp));
     if (g_scratch.d_out)  CUDA_CHECK(cudaFree(g_scratch.d_out));
