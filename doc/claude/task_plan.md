@@ -3,6 +3,12 @@
 > 建于 2026-07-03，基于 v2.8.0（master@c42efc7）。
 > 依据 [framework_evaluation.md](framework_evaluation.md) 的缺失清单，按依赖顺序排列。
 > 每个模块：实现 → 自带测试通过 → 版本号按改动大小升级 → changelog → git 提交。
+>
+> **状态（2026-07-03）：M1–M7 全部完成**，版本 v2.9.0 → v2.14.0 逐一落地，
+> 与下表规划一致。额外收获：M4 收敛套件首跑即抓出 Iso9 Laplacian 权重错误
+> （零阶不一致，v2.11.1 修复）；M5 基准量化了框架开销（完整 Euler 步比裸
+> kernel 慢 2.8–3.7×）；M6 实测 FLOAT 提速 CD2 1.6× / CD4 3.1×。
+> 详见各版 `changelog/v2.x.y/RELEASE.md`。
 
 ## 执行顺序与版本规划
 
