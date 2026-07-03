@@ -108,11 +108,13 @@ add_library(phix STATIC
     src/IO/ConfigFile.cpp
     src/IO/FieldIO.cpp
     src/IO/OutputWriter.cpp
+    src/IO/PFHubWriter.cpp
     src/material/FreeEnergyTable.cu
     src/material/KKS.cu
     src/material/KKSAntiTrapping.cu
     src/material/BinaryAlloy.cu
     src/lbm/LBM.cu
+    src/diagnostics/Interface.cu
 )
 
 target_include_directories(phix PUBLIC
