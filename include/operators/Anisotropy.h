@@ -68,6 +68,57 @@ __host__ __device__ inline Real factor(Real theta, Real eps, int m,
 Term anisoDiv(const ScalarField& phi, const AnisoParams& p,
               double coeff = 1.0);
 
+// ===========================================================================
+// 3D cubic anisotropy (Karma–Rappel form, axis-aligned crystal axes):
+//
+//     a(n) = 1 − 3ε + 4ε·(n_x⁴ + n_y⁴ + n_z⁴),   n = ∇φ/|∇φ|
+//     J_i  = W0²·a·∂_iφ·[ a + 16ε·(n_i² − S) ],  S = Σ n_k⁴
+//
+// (exact ∂/∂(∂_iφ) of ½W0²a²|∇φ|²; fully algebraic — no transcendentals.)
+// Restricted to a z-invariant field this reduces EXACTLY to the 2D m = 4
+// form above with the same ε (test-enforced).  Convexity bound ε ≲ 1/15
+// as in 2D m=4; grain rotations (non-axis-aligned crystals) are a future
+// extension (rotate ∇φ by Rᵀ, rotate J back).
+//
+// Requires dim == 3, ghost >= 1.  The stencil reads in-plane diagonal
+// neighbours: with BCBatch (v2.24.0 corner pass) the needed EDGE ghosts
+// are filled correctly at boundaries.
+// ===========================================================================
+struct Aniso3DParams {
+    double W0  = 1.0;    // gradient-energy prefactor (flux carries W0²)
+    double eps = 0.0;    // cubic anisotropy strength ε₄
+
+    void validate() const;   // throws std::invalid_argument
+};
+
+namespace aniso {
+
+// a(n) from an (unnormalised) gradient direction — device-friendly.
+__host__ __device__ inline Real factor3D(Real px, Real py, Real pz,
+                                         Real eps) {
+    const Real p2 = px * px + py * py + pz * pz;
+    if (p2 <= Real(1e-150)) return Real(1);
+    // normalise first — Σp⁴/|p|⁴ under/overflows for extreme gradients
+    const Real invp2 = Real(1) / p2;
+    const Real nx2 = px * px * invp2;
+    const Real ny2 = py * py * invp2;
+    const Real nz2 = pz * pz * invp2;
+    const Real S = nx2 * nx2 + ny2 * ny2 + nz2 * nz2;
+    return Real(1) - Real(3) * eps + Real(4) * eps * S;
+}
+
+} // namespace aniso
+
+// coeff · ∇·J with the cubic 3D flux above, as a single fused Term.
+Term anisoDiv3D(const ScalarField& phi, const Aniso3DParams& p,
+                double coeff = 1.0);
+
+// aOut(physical cells) = a(n(∇φ)) from CD2 cell-centre gradients (3D).
+void anisoFactor3DOnGPU(const ScalarField& phi, ScalarField& aOut,
+                        const Aniso3DParams& p);
+void anisoFactor3DOnCPU(const ScalarField& phi, ScalarField& aOut,
+                        const Aniso3DParams& p);
+
 // aOut(physical cells) = a(θ(∇φ)) from CD2 cell-centre gradients.
 // aOut is pointwise data — no ghost refresh required for pw()-style use.
 void anisoFactorOnGPU(const ScalarField& phi, ScalarField& aOut,

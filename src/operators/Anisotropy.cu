@@ -42,26 +42,27 @@ void cosSinM(Real px, Real py, Real ct0, Real st0, int m,
     const Real cx = ct0 * px + st0 * py;    // rotation by −θ0
     const Real cy = ct0 * py - st0 * px;
     const Real p2 = cx * cx + cy * cy;
-    if (p2 <= Real(1e-300)) {               // no interface direction
-        cosm = Real(0);
+    if (p2 <= Real(1e-150)) {               // no interface direction (margin
+        cosm = Real(0);                     // against px² underflow)
         sinm = Real(0);
         return;
     }
-    Real zr = cx, zi = cy;                  // (cx + i·cy)^m
-    Real pm2 = p2;                          // p2^m
-    for (int k = 1; k < m; ++k) {
-        const Real t = zr * cx - zi * cy;
-        zi = zr * cy + zi * cx;
-        zr = t;
-        pm2 *= p2;
-    }
+    // Normalise FIRST: powers of the unit direction stay O(1), whereas
+    // p2^m under/overflows for extreme-magnitude gradients (0·inf → NaN).
 #ifdef __CUDA_ARCH__
-    const Real inv = rsqrt(pm2);
+    const Real inv = rsqrt(p2);
 #else
-    const Real inv = Real(1) / std::sqrt(pm2);
+    const Real inv = Real(1) / std::sqrt(p2);
 #endif
-    cosm = zr * inv;
-    sinm = zi * inv;
+    const Real ux = cx * inv, uy = cy * inv;
+    Real zr = ux, zi = uy;                  // (ux + i·uy)^m, |z| == 1
+    for (int k = 1; k < m; ++k) {
+        const Real t = zr * ux - zi * uy;
+        zi = zr * uy + zi * ux;
+        zr = t;
+    }
+    cosm = zr;
+    sinm = zi;
 }
 
 __host__ __device__ inline
@@ -284,6 +285,231 @@ void anisoFactorOnCPU(const ScalarField& phi, ScalarField& aOut,
                 static_cast<Real>(std::sin(p.theta0)), p.m, cosm, sinm);
         aOut.curr[static_cast<std::size_t>(c)] =
             Real(1) + static_cast<Real>(p.eps) * cosm;
+    }
+}
+
+// ===========================================================================
+// 3D cubic anisotropy (Karma–Rappel), axis-aligned crystal axes.
+// ===========================================================================
+
+void Aniso3DParams::validate() const {
+    if (W0 <= 0.0)
+        throw std::invalid_argument("Aniso3DParams: W0 must be > 0");
+    if (eps < 0.0 || eps >= 0.3)
+        throw std::invalid_argument(
+            "Aniso3DParams: eps must be in [0, 0.3) — note the convexity "
+            "bound is ~1/15, larger values need regularisation");
+}
+
+namespace {
+
+// Face flux along the normal slot `nIdx` (0=x,1=y,2=z) given the face-local
+// gradient components ordered as (px, py, pz):
+//   J_n = W0² a p_n [a + 16ε(n_n² − S)],  S = Σn⁴
+__host__ __device__ inline
+Real flux3(Real px, Real py, Real pz, int nIdx, Real W0sq, Real eps)
+{
+    const Real pn = (nIdx == 0) ? px : (nIdx == 1) ? py : pz;
+    const Real p2 = px * px + py * py + pz * pz;
+    if (p2 <= Real(1e-150)) return W0sq * pn;   // margin vs p² underflow
+
+    // Normalised direction cosines squared FIRST — S = Σ(n_i²)² stays O(1)
+    // (a raw Σp⁴/|p|⁴ under/overflows for extreme gradients → 0·inf NaN).
+    const Real invp2 = Real(1) / p2;
+    const Real nx2 = px * px * invp2;
+    const Real ny2 = py * py * invp2;
+    const Real nz2 = pz * pz * invp2;
+    const Real S = nx2 * nx2 + ny2 * ny2 + nz2 * nz2;
+    const Real a = Real(1) - Real(3) * eps + Real(4) * eps * S;
+    const Real nn2 = (nIdx == 0) ? nx2 : (nIdx == 1) ? ny2 : nz2;
+    return W0sq * a * pn * (a + Real(16) * eps * (nn2 - S));
+}
+
+// Face-local gradient at the face between cells L and R along `ax`:
+// normal = 2-point difference; each tangential = averaged central diffs of
+// the two adjacent cells (identical inputs from both sides → conservative).
+__host__ __device__ inline
+Real aniso3dDivCell(const Real* f, int c, int sx, int sz,
+                    Real inv_dx, Real inv_dy, Real inv_dz,
+                    Real W0sq, Real eps)
+{
+    const Real q = Real(0.25);
+    const int st[3] = {1, sx, sz};
+    const Real invd[3] = {inv_dx, inv_dy, inv_dz};
+
+    Real div = Real(0);
+    for (int ax = 0; ax < 3; ++ax) {
+        const int  sn  = st[ax];
+        const int  t1  = (ax == 0) ? 1 : 0;          // first tangential axis
+        const int  t2  = (ax == 2) ? 1 : 2;          // second tangential axis
+        const int  s1  = st[t1], s2 = st[t2];
+        const Real id1 = invd[t1], id2 = invd[t2];
+
+        Real p[2][3];                                // [west|east][x,y,z]
+        for (int side = 0; side < 2; ++side) {
+            const int R = c + side * sn;             // right cell of the face
+            const int L = R - sn;                    // left cell
+            const Real pn  = (f[R] - f[L]) * invd[ax];
+            const Real pt1 = q * id1 * (f[L + s1] - f[L - s1]
+                                        + f[R + s1] - f[R - s1]);
+            const Real pt2 = q * id2 * (f[L + s2] - f[L - s2]
+                                        + f[R + s2] - f[R - s2]);
+            p[side][ax] = pn;
+            p[side][t1] = pt1;
+            p[side][t2] = pt2;
+        }
+        const Real jw = flux3(p[0][0], p[0][1], p[0][2], ax, W0sq, eps);
+        const Real je = flux3(p[1][0], p[1][1], p[1][2], ax, W0sq, eps);
+        div += (je - jw) * invd[ax];
+    }
+    return div;
+}
+
+__global__ void kernel_aniso3d_div(
+        Real* rhs, const Real* f,
+        Real coeff,
+        int nx, int ny, int nz,
+        int sx, int sy, int g,
+        Real inv_dx, Real inv_dy, Real inv_dz,
+        Real W0sq, Real eps)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nx * ny * nz) return;
+    const int i = tid % nx;
+    const int j = (tid / nx) % ny;
+    const int k = tid / (nx * ny);
+    const int c = (i + g) + sx * ((j + g) + sy * (k + g));
+    rhs[c] += coeff * aniso3dDivCell(f, c, sx, sx * sy,
+                                     inv_dx, inv_dy, inv_dz, W0sq, eps);
+}
+
+__global__ void kernel_aniso3d_factor(
+        Real* out, const Real* f,
+        int nx, int ny, int nz,
+        int sx, int sy, int g,
+        Real i2dx, Real i2dy, Real i2dz, Real eps)
+{
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nx * ny * nz) return;
+    const int i = tid % nx;
+    const int j = (tid / nx) % ny;
+    const int k = tid / (nx * ny);
+    const int c = (i + g) + sx * ((j + g) + sy * (k + g));
+    const int sz = sx * sy;
+    out[c] = aniso::factor3D((f[c + 1] - f[c - 1]) * i2dx,
+                             (f[c + sx] - f[c - sx]) * i2dy,
+                             (f[c + sz] - f[c - sz]) * i2dz, eps);
+}
+
+void checkField3D(const ScalarField& phi, const char* fn) {
+    if (phi.mesh.dim != 3)
+        throw std::invalid_argument(
+            std::string(fn) + ": 3D meshes only (use anisoDiv for 2D)");
+    if (phi.ghost < 1)
+        throw std::invalid_argument(std::string(fn) + ": ghost >= 1 required");
+}
+
+} // namespace
+
+Term anisoDiv3D(const ScalarField& phi, const Aniso3DParams& p, double coeff) {
+    p.validate();
+    checkField3D(phi, "anisoDiv3D");
+
+    Term t;
+    t.type  = TermType::COMPOSITE;
+    t.field = &phi;
+    t.coeff = coeff;
+    t.ghostRequired = 1;
+
+    const int  nx = phi.mesh.n[0], ny = phi.mesh.n[1], nz = phi.mesh.n[2];
+    const int  sx = phi.storedDims[0], sy = phi.storedDims[1];
+    const int  g  = phi.ghost;
+    const Real idx = static_cast<Real>(1.0 / phi.mesh.d[0]);
+    const Real idy = static_cast<Real>(1.0 / phi.mesh.d[1]);
+    const Real idz = static_cast<Real>(1.0 / phi.mesh.d[2]);
+    const Real W0sq = static_cast<Real>(p.W0 * p.W0);
+    const Real eps  = static_cast<Real>(p.eps);
+
+    const ScalarField* pf = &phi;
+
+    t.gpu_launcher = [pf, nx, ny, nz, sx, sy, g, idx, idy, idz, W0sq, eps]
+                     (Real* d_rhs, double c, ScratchPool& pool) {
+        if (!pf->d_curr)
+            throw std::runtime_error("anisoDiv3D GPU: field not on device");
+        const int total = nx * ny * nz;
+        kernel_aniso3d_div<<<(total + 255) / 256, 256, 0, pool.stream>>>(
+            d_rhs, pf->d_curr, static_cast<Real>(c),
+            nx, ny, nz, sx, sy, g, idx, idy, idz, W0sq, eps);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            throw std::runtime_error(
+                std::string("anisoDiv3D kernel error: ")
+                + cudaGetErrorString(err));
+    };
+
+    t.cpu_kernel = [pf, nx, ny, nz, sx, sy, g, idx, idy, idz, W0sq, eps]
+                   (Real* rhs, double c, ScratchPool&) {
+        const Real* f = pf->curr.data();
+        for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            const int ctr = (i + g) + sx * ((j + g) + sy * (k + g));
+            rhs[ctr] += static_cast<Real>(c)
+                      * aniso3dDivCell(f, ctr, sx, sx * sy,
+                                       idx, idy, idz, W0sq, eps);
+        }
+    };
+
+    return t;
+}
+
+void anisoFactor3DOnGPU(const ScalarField& phi, ScalarField& aOut,
+                        const Aniso3DParams& p) {
+    p.validate();
+    checkField3D(phi, "anisoFactor3DOnGPU");
+    if (aOut.storedSize != phi.storedSize)
+        throw std::invalid_argument("anisoFactor3DOnGPU: layout mismatch");
+    if (!phi.d_curr || !aOut.d_curr)
+        throw std::runtime_error("anisoFactor3DOnGPU: fields not on device");
+
+    const int total = phi.mesh.n[0] * phi.mesh.n[1] * phi.mesh.n[2];
+    kernel_aniso3d_factor<<<(total + 255) / 256, 256>>>(
+        aOut.d_curr, phi.d_curr,
+        phi.mesh.n[0], phi.mesh.n[1], phi.mesh.n[2],
+        phi.storedDims[0], phi.storedDims[1], phi.ghost,
+        static_cast<Real>(0.5 / phi.mesh.d[0]),
+        static_cast<Real>(0.5 / phi.mesh.d[1]),
+        static_cast<Real>(0.5 / phi.mesh.d[2]),
+        static_cast<Real>(p.eps));
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("anisoFactor3D kernel error: ")
+                                 + cudaGetErrorString(err));
+}
+
+void anisoFactor3DOnCPU(const ScalarField& phi, ScalarField& aOut,
+                        const Aniso3DParams& p) {
+    p.validate();
+    checkField3D(phi, "anisoFactor3DOnCPU");
+    if (aOut.storedSize != phi.storedSize)
+        throw std::invalid_argument("anisoFactor3DOnCPU: layout mismatch");
+
+    const Real* f = phi.curr.data();
+    const int nx = phi.mesh.n[0], ny = phi.mesh.n[1], nz = phi.mesh.n[2];
+    const int sx = phi.storedDims[0], sy = phi.storedDims[1];
+    const int g = phi.ghost, sz = sx * sy;
+    const Real i2dx = static_cast<Real>(0.5 / phi.mesh.d[0]);
+    const Real i2dy = static_cast<Real>(0.5 / phi.mesh.d[1]);
+    const Real i2dz = static_cast<Real>(0.5 / phi.mesh.d[2]);
+    for (int k = 0; k < nz; ++k)
+    for (int j = 0; j < ny; ++j)
+    for (int i = 0; i < nx; ++i) {
+        const int c = (i + g) + sx * ((j + g) + sy * (k + g));
+        aOut.curr[static_cast<std::size_t>(c)] =
+            aniso::factor3D((f[c + 1] - f[c - 1]) * i2dx,
+                            (f[c + sx] - f[c - sx]) * i2dy,
+                            (f[c + sz] - f[c - sz]) * i2dz,
+                            static_cast<Real>(p.eps));
     }
 }
 
