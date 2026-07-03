@@ -314,7 +314,20 @@ Equation::Equation(ScalarField& unknown_, const std::string& name_)
 // forward-declares it to break the circular include chain).
 Equation::~Equation() = default;
 
+// Every term's stencil width must fit inside its source field's halo —
+// a CD4 term (ghost 2) on a ghost-1 field would silently read out of bounds.
+static void validateTermGhosts(const RHSExpr& expr) {
+    for (const auto& t : expr.terms)
+        if (t.field && t.field->ghost < t.ghostRequired)
+            throw std::invalid_argument(
+                "Equation::setRHS: term requires ghost >= "
+                + std::to_string(t.ghostRequired) + " but field '"
+                + t.field->name + "' has ghost = "
+                + std::to_string(t.field->ghost));
+}
+
 void Equation::setRHS(const RHSExpr& expr) {
+    validateTermGhosts(expr);
     rhs_expr_ = expr;
     requiredGhost_ = 0;
     for (const auto& t : rhs_expr_.terms)
@@ -322,6 +335,7 @@ void Equation::setRHS(const RHSExpr& expr) {
 }
 
 void Equation::setRHS(const Term& t) {
+    validateTermGhosts(RHSExpr(t));
     rhs_expr_ = RHSExpr(t);
     requiredGhost_ = t.ghostRequired;
     eval_plan_.reset();

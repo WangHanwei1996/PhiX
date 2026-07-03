@@ -54,6 +54,7 @@ add_library(phix STATIC
     src/field/Reduce.cu
     src/operators/Laplacian.cu
     src/operators/Gradient.cu
+    src/operators/Advection.cu
     src/operators/FaceOps.cu
     src/boundary/Boundary.cu
     src/boundary/BCFactory.cpp

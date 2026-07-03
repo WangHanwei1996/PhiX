@@ -12,3 +12,8 @@ add_executable(module_face_pw test_face_pw.cu)
 target_link_libraries(module_face_pw PRIVATE phix)
 set_target_properties(module_face_pw PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_test(NAME module_face_pw COMMAND module_face_pw)
+
+add_executable(module_schemes_ext test_schemes_ext.cu)
+target_link_libraries(module_schemes_ext PRIVATE phix)
+set_target_properties(module_schemes_ext PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_test(NAME module_schemes_ext COMMAND module_schemes_ext)

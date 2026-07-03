@@ -109,6 +109,7 @@ Term lap(const ScalarField& f, double coeff) {
 
 template Term lap<scheme::CD2>(const ScalarField&, double);
 template Term lap<scheme::Iso9>(const ScalarField&, double);
+template Term lap<scheme::CD4>(const ScalarField&, double);
 
 Term lap(const ScalarField& f, double coeff) {
     return lap<scheme::CD2>(f, coeff);
@@ -116,9 +117,10 @@ Term lap(const ScalarField& f, double coeff) {
 
 Term lap(const ScalarField& f, const std::string& schemeName, double coeff) {
     if (schemeName == "Iso9") return lap<scheme::Iso9>(f, coeff);
+    if (schemeName == "CD4") return lap<scheme::CD4>(f, coeff);
     if (schemeName == "CD2" || schemeName.empty()) return lap<scheme::CD2>(f, coeff);
     throw std::invalid_argument(
-        std::string("lap: unknown scheme '") + schemeName + "'. Supported: CD2, Iso9");
+        std::string("lap: unknown scheme '") + schemeName + "'. Supported: CD2, CD4, Iso9");
 }
 
 } // namespace PhiX

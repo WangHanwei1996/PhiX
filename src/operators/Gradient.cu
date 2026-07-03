@@ -107,6 +107,7 @@ Term grad(const ScalarField& f, int axis, double coeff) {
 
 template Term grad<scheme::CD2>(const ScalarField&, int, double);
 template Term grad<scheme::Iso9>(const ScalarField&, int, double);
+template Term grad<scheme::CD4>(const ScalarField&, int, double);
 
 Term grad(const ScalarField& f, int axis, double coeff) {
     return grad<scheme::CD2>(f, axis, coeff);
@@ -114,9 +115,10 @@ Term grad(const ScalarField& f, int axis, double coeff) {
 
 Term grad(const ScalarField& f, int axis, const std::string& schemeName, double coeff) {
     if (schemeName == "Iso9") return grad<scheme::Iso9>(f, axis, coeff);
+    if (schemeName == "CD4") return grad<scheme::CD4>(f, axis, coeff);
     if (schemeName == "CD2" || schemeName.empty()) return grad<scheme::CD2>(f, axis, coeff);
     throw std::invalid_argument(
-        std::string("grad: unknown scheme '") + schemeName + "'. Supported: CD2, Iso9");
+        std::string("grad: unknown scheme '") + schemeName + "'. Supported: CD2, CD4, Iso9");
 }
 
 } // namespace PhiX
