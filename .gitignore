@@ -21,6 +21,7 @@ applications/solvers/Cahn-Hillard_double-well/2D/CH_2D
 applications/solvers/CH_4AC_Ostwald/2D/CH_4AC_Ostwald
 applications/solvers/CH_elastic_precipitate/2D/CH_elastic_precipitate
 applications/solvers/LBM_channel/2D/LBM_channel
+applications/solvers/CH_Poisson_electro/2D/CH_Poisson_electro
 applications/solvers/Cahn-Hillard+Allen-Cahn_double-well/2D/CH_AC_2D
 applications/solvers/glass_formation/2D/GFA_2D
 applications/solvers/MPF_AC_DW/MPF_AC_DW
