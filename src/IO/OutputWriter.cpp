@@ -5,6 +5,7 @@
 #include <iostream>
 #include <filesystem>
 #include <sstream>
+#include <stdexcept>
 
 namespace {
 // Format simulation time in scientific notation via a local stream, so the
@@ -27,7 +28,11 @@ OutputWriter::OutputWriter(const nlohmann::json& output_config)
     const std::string fmt = output_config.at("format").get<std::string>();
     writeBinary_ = (fmt == "BINARY" || fmt == "ALL");
     writeDat_    = (fmt == "DAT"    || fmt == "ALL");
-    writeVtk_    = (fmt == "VTK"    || fmt == "ALL");
+    writeVtk_    = (fmt == "VTK"    || fmt == "VTS" || fmt == "ALL");
+    if (!writeBinary_ && !writeDat_ && !writeVtk_)
+        throw std::invalid_argument(
+            "OutputWriter: unknown output format \"" + fmt
+            + "\" (expected BINARY, DAT, VTK/VTS or ALL)");
 
     // Optional VTS coordinate scale (e.g. 1e9 → nm); default 1.0 = physical metres.
     coordScale_ = output_config.value("coord_scale", 1.0);

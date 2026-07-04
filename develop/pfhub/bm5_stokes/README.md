@@ -25,7 +25,9 @@ cd a_channel   # 或 b_ellipse
 
 300×60 格子（dx=0.1），LBM 是 Navier-Stokes 求解器，本例 Re≈5.4
 处于弱惯性 Stokes 区。输出 cut_x7.csv / cut_y5.csv
-（y|x, velocity_x, velocity_y, pressure）。
+（y|x, velocity_x, velocity_y, pressure）；稳态收敛后另写
+`output/{ux,uy,p}_<step>.vts` 场快照（物理单位、压力含静水叠加，
+供 ParaView）。
 
 ## 验证（变体 a 对解析泊肃叶解）
 

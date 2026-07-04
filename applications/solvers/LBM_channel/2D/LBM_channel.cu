@@ -30,10 +30,12 @@
 #include "field/ScalarField.h"
 #include "lbm/LBM.h"
 #include "IO/ConfigFile.h"
+#include "IO/FieldIO.h"
 #include "IO/PFHubWriter.h"
 
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -212,6 +214,26 @@ int main(int argc, char* argv[])
                        (V(rho, i, j) - rhoRef) * pConv
                            + pHydro(mesh.coord(0, i), yCut)});
     }
-    std::cout << "  wrote " << xCsv << ", " << yCsv << "\nDone.\n";
+    std::cout << "  wrote " << xCsv << ", " << yCsv << "\n";
+
+    // === 6. Steady-state field snapshots (physical units, for ParaView) =====
+    std::filesystem::create_directories("output");
+    for (int j = 0; j < ny; ++j)
+    for (int i = 0; i < nx; ++i) {
+        const std::size_t id = static_cast<std::size_t>(ux.index(i, j));
+        const double pv = (static_cast<double>(rho.curr[id]) - rhoRef) * pConv
+                        + pHydro(mesh.coord(0, i), mesh.coord(1, j));
+        ux.curr[id]  = static_cast<Real>(static_cast<double>(ux.curr[id])
+                                         * uConv);
+        uy.curr[id]  = static_cast<Real>(static_cast<double>(uy.curr[id])
+                                         * uConv);
+        rho.curr[id] = static_cast<Real>(pv);   // reuse rho storage for p
+    }
+    rho.name = "p";
+    const std::string tag = std::to_string(lbm.stepCount());
+    ux.write ("output/ux_"  + tag + ".vts", FieldFormat::VTS);
+    uy.write ("output/uy_"  + tag + ".vts", FieldFormat::VTS);
+    rho.write("output/p_"   + tag + ".vts", FieldFormat::VTS);
+    std::cout << "  wrote output/{ux,uy,p}_" << tag << ".vts\nDone.\n";
     return 0;
 }
